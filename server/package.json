@@ -1,0 +1,29 @@
+{
+  "name": "server",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": "",
+  "dependencies": {
+    "@fastify/websocket": "^11.2.0",
+    "dotenv": "^17.4.2",
+    "fastify": "^5.8.5",
+    "pg": "^8.20.0",
+    "ws": "^8.20.0",
+    "y-protocols": "^1.0.7",
+    "yjs": "^13.6.30"
+  },
+  "devDependencies": {
+    "@types/node": "^25.6.0",
+    "@types/pg": "^8.20.0",
+    "@types/ws": "^8.18.1",
+    "nodemon": "^3.1.14",
+    "ts-node": "^10.9.2",
+    "typescript": "^6.0.3"
+  }
+}
