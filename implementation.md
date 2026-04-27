@@ -584,3 +584,104 @@ Mark each as you complete it:
 ---
 
 *Last updated: Day 0, Hour 0. Update this file as you go.*
+
+---
+
+## Session Log — What's Been Built
+
+> This section tracks deviations from the original plan and completed work. Update after every coding session.
+
+---
+
+### Session 1 — Database, Auth & Room System
+
+**Branch:** `feat/db-auth-routes`
+**PR:** open on GitHub (not yet merged)
+
+---
+
+#### Database (Railway Postgres — not Render)
+
+The original plan specified Render's free-tier Postgres. We are using a **Railway Postgres** instance instead for local development. The `DATABASE_URL` is in `server/.env` (gitignored). **Render Postgres will be used for final deployment.**
+
+---
+
+#### Schema Changes vs Original Plan
+
+The original plan had 4 tables. We now have **7 tables**:
+
+| Table | Status | Notes |
+|---|---|---|
+| `rooms` | ✅ created | Unchanged from plan |
+| `users` | ✅ created | **Added:** `email` (UNIQUE), `password_hash` — original had only `name` + `color` |
+| `memberships` | ✅ created | Unchanged from plan |
+| `events` | ✅ created | Unchanged from plan — append-only, BIGSERIAL `seq` |
+| `sessions` | ✅ created | **New — not in original plan.** UUID token stored in DB, sent as `Authorization: Bearer <token>` |
+| `invites` | ✅ created | **New — not in original plan.** Token-based invite links, 48hr expiry, per-room role assignment |
+| `canvas_nodes` | ✅ created | **New — not in original plan.** Materialized read model for RBAC checks + Task Board queries. Soft deletes via `deleted_at`. |
+
+Migration files live in `server/migrations/`:
+- `001_init.sql` — rooms, users, sessions, memberships, events
+- `002_canvas_nodes.sql` — canvas_nodes
+- `003_auth.sql` — adds email/password_hash to users, expires_at to sessions, creates invites table
+
+---
+
+#### Auth System — Invite-Only Access
+
+**Change from original plan:** The plan described a simple name + color picker on first visit (no passwords). We implemented full email/password auth with invite-only room access.
+
+**Why:** Judges test RBAC by sending raw WebSocket requests. Without real server-side identity (not just a self-reported user ID), the RBAC enforcement has no way to authenticate the actor. This also scores better on the security/architecture criteria.
+
+**Flow:**
+1. User registers at `POST /auth/register` with name, email, password, color
+2. Login at `POST /auth/login` → receives a session token (UUID)
+3. Token sent as `Authorization: Bearer <token>` on every request and WebSocket connection
+4. Lead creates a room → becomes `lead` in `memberships`
+5. Lead invites teammates by email via `POST /rooms/:id/invite` → generates invite link `/invite/<token>`
+6. Invitee opens the link, must be logged in → `POST /invites/:token/accept` → `memberships` row created
+7. Anyone without a membership hitting `/room/:id` is blocked
+
+---
+
+#### Files Created
+
+```
+server/
+├── migrations/
+│   ├── 001_init.sql
+│   ├── 002_canvas_nodes.sql
+│   └── 003_auth.sql
+├── src/
+│   ├── db.ts              — pg Pool + typed query() helper
+│   ├── event-log.ts       — appendEvent() with 200ms write buffer, getEventsSince(), getLatestSeq()
+│   ├── index.ts           — Fastify bootstrap, registers all routes
+│   ├── middleware/
+│   │   └── auth.ts        — requireAuth hook (validates Bearer token, attaches request.user)
+│   └── routes/
+│       ├── auth.ts        — POST /auth/register, POST /auth/login, POST /auth/logout
+│       ├── rooms.ts       — POST /rooms, GET /rooms/:id
+│       └── invites.ts     — POST /rooms/:id/invite, POST /invites/:token/accept
+```
+
+---
+
+#### Tested & Verified
+
+- [x] Register user
+- [x] Login + receive session token
+- [x] Create room (caller becomes lead)
+- [x] Get room info + member list with roles
+- [x] Lead sends invite by email
+- [x] Invitee registers and accepts invite → joins as contributor
+- [x] Double-accept invite blocked (409)
+- [x] Contributor cannot send invites (403)
+- [x] Unauthenticated requests blocked (401)
+
+---
+
+#### What's Next
+
+- [ ] WebSocket server (Feature 1) — bare WS server with room registry
+- [ ] Yjs document sync (Feature 2)
+- [ ] Frontend — auth pages (register/login), room creation, canvas
