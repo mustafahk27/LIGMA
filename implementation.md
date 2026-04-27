@@ -561,14 +561,14 @@ Y.applyUpdate(tempDoc, incomingUpdate);
 
 Mark each as you complete it:
 
-- [ ] F1 — Bare WebSocket Server
-- [ ] F2 — Yjs Document Sync
+- [x] F1 — Bare WebSocket Server
+- [x] F2 — Yjs Document Sync
 - [ ] F3 — Cursor Presence (5 pts)
 - [ ] F4 — Canvas Foundations
 - [ ] F5 — Multi-Element Canvas
 - [ ] F6 — Collaborative Text Editing (10 pts conflict + 10 pts sync = 20 pts)
-- [ ] F7 — Event Log Persistence (8 pts)
-- [ ] F8 — Reconnection & Replay
+- [x] F7 — Event Log Persistence (8 pts)
+- [x] F8 — Reconnection & Replay
 - [ ] F9 — Node-Level RBAC (7 pts)
 - [ ] F10 — AI Intent Classification (10 pts)
 - [ ] F11 — Live Task Board (8 pts)
@@ -583,7 +583,7 @@ Mark each as you complete it:
 
 ---
 
-*Last updated: Day 0, Hour 0. Update this file as you go.*
+*Last updated: 2026-04-28 — Score tracking synced with Session 2 (F1, F2, F7, F8 complete). Update this file as you go.*
 
 ---
 
@@ -680,8 +680,44 @@ server/
 
 ---
 
+#### What's Next (superseded — see Session 2)
+
+Session 1’s “next” items for the **server** are done in Session 2. Remaining from this list: **frontend** auth pages, room creation UI, and canvas (Features 3+).
+
+---
+
+### Session 2 — WebSocket, Yjs, Event Log & Replay (2026-04-27)
+
+**Summary:** Real-time layer on top of Session 1. Implements **Feature 1** (WS + room registry), **Feature 2** (Yjs sync), **Feature 7** (persist every `yjs_update` to Postgres with buffered writes), **Feature 8** (reconnect + diff replay via `lastSeq` + state vector).
+
+**Full technical notes:** See repository root [`CHANGES.md`](./CHANGES.md) — wire protocol, file-by-file behavior, and dependency graph.
+
+#### Server files (in addition to Session 1)
+
+| File | Role |
+|------|------|
+| `server/src/ws.ts` | Upgrade on `/ws/:roomId?token=…`, auth + membership, message loop (binary Yjs, `sync`, `awareness`) |
+| `server/src/rooms.ts` | In-memory rooms, `Y.Doc` per room, broadcast helpers |
+| `server/src/ydoc-store.ts` | Hydrate from DB, `applyAndBroadcast`, encode state / state vector |
+| `server/src/sync.ts` | Initial full state + `replayMissedEvents` for reconnect |
+
+`server/src/index.ts` attaches `WebSocketServer` to Fastify’s HTTP server after `listen()`.
+
+#### Client files
+
+| File | Role |
+|------|------|
+| `web/lib/yjs.ts` | Shared `Y.Doc` + `nodes` map |
+| `web/lib/ws-provider.ts` | `WsProvider`, reconnect backoff, Yjs ↔ WS, **Awareness** (ready for F3 UI) |
+| `web/store/ws.ts` | Connection status + `lastSeq` for UI (e.g. F14 connection dot) |
+
+#### Done when (for this session)
+
+- [x] Two clients in the same room stay in sync via Yjs; updates persist to `events`
+- [x] Reconnect replays missed updates without full page reload (see `CHANGES.md`)
+
 #### What's Next
 
-- [ ] WebSocket server (Feature 1) — bare WS server with room registry
-- [ ] Yjs document sync (Feature 2)
-- [ ] Frontend — auth pages (register/login), room creation, canvas
+- [ ] **Feature 3** — Cursor presence UI (`Cursors.tsx`, throttle mouse → awareness); server relay already works
+- [ ] **Frontend shell** — register/login, room route, `useWsProvider(roomId, token)` on a real page (still `page.tsx` starter today)
+- [ ] **Feature 4+** — Konva canvas, stickies with `Y.Text`, then F5–F6

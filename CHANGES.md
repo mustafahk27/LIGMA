@@ -2,6 +2,8 @@
 
 > Session: WebSocket & Real-Time Sync (Features 1, 2, 7, 8)
 > Date: 2026-04-27
+>
+> **Session log / score checklist:** [`implementation.md`](./implementation.md) → *Session Log* and *Score Tracking*.
 
 ---
 
