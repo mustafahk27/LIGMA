@@ -66,6 +66,20 @@ export function appendEvent(
   scheduleFlush();
 }
 
+/**
+ * Convenience wrapper for persisting a raw Yjs binary update to the event log.
+ * The binary data is base64-encoded so it can live as a JSONB value in Postgres.
+ */
+export function persistYjsUpdate(
+  room_id: string,
+  actor_id: string,
+  update: Uint8Array
+): void {
+  appendEvent(room_id, actor_id, 'yjs_update', {
+    update: Buffer.from(update).toString('base64'),
+  });
+}
+
 export async function getEventsSince(
   room_id: string,
   after_seq: number,
