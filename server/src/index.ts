@@ -11,8 +11,17 @@ dotenv.config();
 
 const app = Fastify({ logger: true });
 
+/** Comma-separated list in ALLOWED_ORIGIN, e.g. http://localhost:3000,http://127.0.0.1:3000 */
+function corsOrigin(): string | string[] | boolean {
+  const raw = process.env['ALLOWED_ORIGIN']?.trim();
+  if (!raw) return 'http://localhost:3000';
+  if (raw === '*') return true;
+  const list = raw.split(',').map((s) => s.trim()).filter(Boolean);
+  return list.length === 1 ? list[0]! : list;
+}
+
 await app.register(cors, {
-  origin: process.env['ALLOWED_ORIGIN'] ?? 'http://localhost:3000',
+  origin: corsOrigin(),
   credentials: true,
 });
 

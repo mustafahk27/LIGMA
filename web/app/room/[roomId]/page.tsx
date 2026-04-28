@@ -85,7 +85,14 @@ const DEMO_TASKS: TaskItem[] = [];
 
 export default function RoomPage() {
   const router = useRouter();
-  const params = useParams<{ roomId: string }>();
+  const params = useParams<{ roomId: string | string[] }>();
+  const roomId = useMemo(() => {
+    const raw = params.roomId;
+    if (typeof raw === 'string') return raw;
+    if (Array.isArray(raw)) return raw[0] ?? '';
+    return '';
+  }, [params.roomId]);
+
   const { user, token, hydrate, hydrated } = useAuthStore();
 
   const tool = useUiStore((s) => s.tool);
@@ -112,9 +119,9 @@ export default function RoomPage() {
       router.replace('/login');
       return;
     }
+    if (!roomId) return;
     loadRoom();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hydrated, token]);
+  }, [hydrated, token, roomId]);
 
   /* ── Compute role + memoise so identity doesn't churn ───────────────── */
   const myRole: Role = useMemo(() => {
@@ -128,7 +135,7 @@ export default function RoomPage() {
   }, [myRole, setRole]);
 
   /* ── Connect Yjs WS provider once room + user are known ─────────────── */
-  useWsProvider(params.roomId, token);
+  useWsProvider(roomId, token);
 
   /* ── Push our identity into Awareness so other tabs label cursors ───── */
   useEffect(() => {
@@ -170,9 +177,9 @@ export default function RoomPage() {
   }, [setTool]);
 
   async function loadRoom() {
-    if (!token || !params.roomId) return;
+    if (!token || !roomId) return;
     try {
-      const r = await rooms.get(params.roomId, token);
+      const r = await rooms.get(roomId, token);
       setRoom(r);
     } catch {
       // not a member or room gone
@@ -183,12 +190,12 @@ export default function RoomPage() {
 
   async function handleInvite(e: React.FormEvent) {
     e.preventDefault();
-    if (!token || !params.roomId) return;
+    if (!token || !roomId) return;
     setInviteStatus('sending');
     setInviteError('');
     try {
       const { invites } = await import('@/lib/api');
-      await invites.create(params.roomId, inviteEmail, inviteRole, token);
+      await invites.create(roomId, inviteEmail, inviteRole, token);
       setInviteStatus('sent');
       setInviteEmail('');
     } catch (err: unknown) {

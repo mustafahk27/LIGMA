@@ -150,6 +150,7 @@ export function createUpgradeHandler(wss: WebSocketServer) {
     const [rawPath, rawQuery] = url.split('?') as [string, string | undefined];
     const match = WS_PATH_RE.exec(rawPath ?? '');
     if (!match) {
+      console.warn('[ws] upgrade rejected: path not /ws/<uuid>', rawPath);
       socket.write('HTTP/1.1 404 Not Found\r\n\r\n');
       socket.destroy();
       return;
@@ -162,6 +163,7 @@ export function createUpgradeHandler(wss: WebSocketServer) {
     const token = qs.get('token');
 
     if (!token) {
+      console.warn('[ws] upgrade rejected: missing ?token=');
       socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
       socket.destroy();
       return;
@@ -179,6 +181,7 @@ export function createUpgradeHandler(wss: WebSocketServer) {
     }
 
     if (!user) {
+      console.warn('[ws] upgrade rejected: invalid or expired session token');
       socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
       socket.destroy();
       return;
@@ -196,6 +199,7 @@ export function createUpgradeHandler(wss: WebSocketServer) {
     }
 
     if (!role) {
+      console.warn(`[ws] upgrade rejected: user ${user.id} not a member of room ${roomId}`);
       socket.write('HTTP/1.1 403 Forbidden\r\n\r\n');
       socket.destroy();
       return;
