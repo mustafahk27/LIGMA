@@ -563,27 +563,29 @@ Mark each as you complete it:
 
 - [x] F1 — Bare WebSocket Server
 - [x] F2 — Yjs Document Sync
-- [ ] F3 — Cursor Presence (5 pts)
-- [ ] F4 — Canvas Foundations
-- [ ] F5 — Multi-Element Canvas
-- [ ] F6 — Collaborative Text Editing (10 pts conflict + 10 pts sync = 20 pts)
+- [x] F3 — Cursor Presence (5 pts)
+- [x] F4 — Canvas Foundations
+- [x] F5 — Multi-Element Canvas
+- [x] F6 — Collaborative Text Editing (10 pts conflict + 10 pts sync = 20 pts)
 - [x] F7 — Event Log Persistence (8 pts)
 - [x] F8 — Reconnection & Replay
-- [ ] F9 — Node-Level RBAC (7 pts)
-- [ ] F10 — AI Intent Classification (10 pts)
-- [ ] F11 — Live Task Board (8 pts)
+- [x] F9 — Node-Level RBAC (7 pts)
+- [ ] F10 — AI Intent Classification (10 pts) — *intent field + UI badge exist; no server classifier / Groq yet*
+- [~] F11 — Live Task Board (8 pts) — *`TaskBoard` UI + empty state; still fed `DEMO_TASKS` (empty) — not wired to `intent === 'action_item'`*
 - [ ] F12 — Event Log Sidebar
 - [ ] F13 — Time-Travel Replay (8 pts bonus)
-- [ ] F14 — UI Polish (15 pts UI/UX)
-- [ ] F15 — README (5 pts)
+- [~] F14 — UI Polish (15 pts UI/UX) — *connection status, room shell, empty states; no onboarding walkthrough*
+- [ ] F15 — README (5 pts) — *`web/README.md` still default Next.js scaffold*
 - [ ] F16 — Final Deploy
 
 **Maximum reachable score: 100 / 100**
 **Realistic target: 88 / 100**
 
+**Legend:** `[x]` done · `[~]` partial / in progress · `[ ]` not started
+
 ---
 
-*Last updated: 2026-04-28 — Score tracking synced with Session 2 (F1, F2, F7, F8 complete). Update this file as you go.*
+*Last updated: 2026-04-28 — Synced with repository scan (canvas, RBAC, Task Board shell, gaps above).*
 
 ---
 
@@ -698,7 +700,7 @@ Session 1’s “next” items for the **server** are done in Session 2. Remaini
 |------|------|
 | `server/src/ws.ts` | Upgrade on `/ws/:roomId?token=…`, auth + membership, message loop (binary Yjs, `sync`, `awareness`) |
 | `server/src/rooms.ts` | In-memory rooms, `Y.Doc` per room, broadcast helpers |
-| `server/src/ydoc-store.ts` | Hydrate from DB, `applyAndBroadcast`, encode state / state vector |
+| `server/src/ydoc-store.ts` | Hydrate from DB, `applyAndBroadcast` (RBAC via `validateUpdate` since Session 3), encode state / state vector |
 | `server/src/sync.ts` | Initial full state + `replayMissedEvents` for reconnect |
 
 `server/src/index.ts` attaches `WebSocketServer` to Fastify’s HTTP server after `listen()`.
@@ -708,7 +710,7 @@ Session 1’s “next” items for the **server** are done in Session 2. Remaini
 | File | Role |
 |------|------|
 | `web/lib/yjs.ts` | Shared `Y.Doc` + `nodes` map |
-| `web/lib/ws-provider.ts` | `WsProvider`, reconnect backoff, Yjs ↔ WS, **Awareness** (ready for F3 UI) |
+| `web/lib/ws-provider.ts` | `WsProvider`, reconnect backoff, Yjs ↔ WS, **Awareness** (drives `Cursors.tsx`) |
 | `web/store/ws.ts` | Connection status + `lastSeq` for UI (e.g. F14 connection dot) |
 
 #### Done when (for this session)
@@ -716,8 +718,34 @@ Session 1’s “next” items for the **server** are done in Session 2. Remaini
 - [x] Two clients in the same room stay in sync via Yjs; updates persist to `events`
 - [x] Reconnect replays missed updates without full page reload (see `CHANGES.md`)
 
-#### What's Next
+#### What's Next (superseded — see Session 3)
 
-- [ ] **Feature 3** — Cursor presence UI (`Cursors.tsx`, throttle mouse → awareness); server relay already works
-- [ ] **Frontend shell** — register/login, room route, `useWsProvider(roomId, token)` on a real page (still `page.tsx` starter today)
-- [ ] **Feature 4+** — Konva canvas, stickies with `Y.Text`, then F5–F6
+Session 2’s follow-ups for the **real-time layer** are complete. What remained then (F3, F4–F6, frontend shell) is now implemented — see Session 3.
+
+---
+
+### Session 3 — Canvas, RBAC, shell & gaps (verified 2026-04-28)
+
+**Summary:** Frontend auth flow (`/`, `/login`, `/register`, `/dashboard`), invite acceptance (`/invite/[token]`), room canvas (`/room/[roomId]`). **F3–F6** shipped: Konva `Canvas.tsx`, `ShapeRenderer.tsx`, pen/shapes/text/stickies, `EditableText.tsx` ↔ `Y.Text`, `Cursors.tsx` over awareness from `ws-provider.ts`. **F9** shipped: server `rbac.ts` + `yjs-diff.ts`, `validateUpdate` inside `applyAndBroadcast` (`ydoc-store.ts`), WS `type: 'rejected'` handled in `ws-provider.ts` / room toast; `AclEditor.tsx` on canvas. Toolbar controls live **inline on the room page** — there is no separate `Toolbar.tsx`.
+
+**Still open (priority order):**
+
+1. **F10** — Add `server/src/classifier.ts` + debounced watcher (or client-side regex + server Groq) so `intent` updates from note text; today `intent` stays `null` unless set manually/synced elsewhere.
+2. **F11** — Replace placeholder `DEMO_TASKS` in `web/app/room/[roomId]/page.tsx` with a subscription over Yjs nodes filtered by `intent === 'action_item'`, resolve author names from room members, wire `onJump` to canvas `panTo`.
+3. **F12** — `GET /rooms/:id/events` + `EventLog.tsx` (or equivalent) + optional WS fanout for new rows.
+4. **F13** — `Timeline.tsx` + replay doc (optional / bonus).
+5. **F14** — Onboarding tooltips, loading skeletons where missing.
+6. **F15** — Judge-facing README (root or `web/`) with architecture, setup, deploy.
+
+**Files (actual layout, not in original one-file-per-feature names):**
+
+| Area | Files |
+|------|--------|
+| Server RBAC | `server/src/rbac.ts`, `server/src/yjs-diff.ts` — called from `server/src/ydoc-store.ts` |
+| Client awareness | `web/lib/ws-provider.ts` (Awareness + WS), `web/lib/awareness-identity.ts` |
+| Canvas | `web/components/Canvas.tsx`, `ShapeRenderer.tsx`, `Cursors.tsx`, `EditableText.tsx`, `AclEditor.tsx` |
+| Task Board | `web/components/TaskBoard.tsx` — UI only until F11 wiring |
+| Room shell | `web/app/room/[roomId]/page.tsx` — tools, `ConnectionStatus`, `TaskBoard`, `useWsProvider` |
+| State | `web/store/ui.ts`, `web/store/ws.ts`, `web/store/auth.ts` |
+
+**Not in repo yet (plan-only):** `server/src/classifier.ts`, `server/src/intent-watcher.ts`, `web/components/EventLog.tsx`, `server/src/routes/events.ts`, `web/components/Timeline.tsx`, `web/lib/replay.ts`, `web/components/Onboarding.tsx`.
