@@ -1,6 +1,6 @@
 import nodemailer from 'nodemailer';
 
-const transporter = nodemailer.createTransport({
+const transportConfig = {
   host: 'smtp.gmail.com',
   port: 587,
   secure: false,
@@ -9,7 +9,10 @@ const transporter = nodemailer.createTransport({
     user: process.env['GMAIL_USER'],
     pass: process.env['GMAIL_APP_PASSWORD'],
   },
-});
+};
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const transporter = nodemailer.createTransport(transportConfig as any);
 
 const FRONTEND_URL = process.env['FRONTEND_URL'] ?? 'http://localhost:3000';
 
