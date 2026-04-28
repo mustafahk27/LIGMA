@@ -1,7 +1,7 @@
 'use client';
 
 import { useLayoutEffect, useRef, useState } from 'react';
-import { Group, Rect, Ellipse, Line, Text } from 'react-konva';
+import { Group, Rect, Ellipse, Line, Arrow, Text } from 'react-konva';
 import type Konva from 'konva';
 import type { NodeSnapshot, Role } from '@/lib/node-types';
 import { canActOnNode } from '@/lib/node-types';
@@ -80,7 +80,10 @@ export function ShapeRenderer({
       <ShapeBody node={node} isEditing={isEditing} isSelected={isSelected} showResizeChrome={showResizeChrome} />
       {isSelected &&
         node.type !== 'text' &&
-        (!showResizeChrome || node.type === 'pen') && <SelectionOutline node={node} />}
+        (!showResizeChrome ||
+          node.type === 'pen' ||
+          node.type === 'line' ||
+          node.type === 'arrow') && <SelectionOutline node={node} />}
       {node.acl.locked && <LockBadge node={node} />}
     </Group>
   );
@@ -107,11 +110,16 @@ function ShapeBody({
         <TextBody node={node} isEditing={isEditing} isSelected={isSelected} showResizeChrome={showResizeChrome} />
       );
     case 'rect':
+    case 'round_rect':
       return <RectBody node={node} />;
     case 'circle':
       return <CircleBody node={node} />;
     case 'pen':
       return <PenBody node={node} />;
+    case 'line':
+      return <LineSegmentBody node={node} />;
+    case 'arrow':
+      return <ArrowSegmentBody node={node} />;
     default:
       return null;
   }
@@ -220,6 +228,8 @@ function TextBody({
 }
 
 function RectBody({ node }: { node: NodeSnapshot }) {
+  const rCap = Math.min(node.width / 2, node.height / 2);
+  const r = Math.min(Math.max(0, node.cornerRadius || 6), rCap);
   return (
     <Rect
       width={node.width}
@@ -227,7 +237,7 @@ function RectBody({ node }: { node: NodeSnapshot }) {
       fill={node.fill}
       stroke={node.stroke}
       strokeWidth={2}
-      cornerRadius={6}
+      cornerRadius={r}
     />
   );
 }
@@ -258,6 +268,39 @@ function PenBody({ node }: { node: NodeSnapshot }) {
       lineJoin="round"
       tension={0.3}
       hitStrokeWidth={14}
+    />
+  );
+}
+
+function LineSegmentBody({ node }: { node: NodeSnapshot }) {
+  const pts = node.points;
+  if (pts.length < 4) return null;
+  return (
+    <Line
+      points={pts}
+      stroke={node.stroke}
+      strokeWidth={2.5}
+      lineCap="round"
+      lineJoin="round"
+      hitStrokeWidth={16}
+    />
+  );
+}
+
+function ArrowSegmentBody({ node }: { node: NodeSnapshot }) {
+  const pts = node.points;
+  if (pts.length < 4) return null;
+  return (
+    <Arrow
+      points={pts}
+      stroke={node.stroke}
+      fill={node.stroke}
+      strokeWidth={2.5}
+      pointerLength={12}
+      pointerWidth={12}
+      lineCap="round"
+      lineJoin="round"
+      hitStrokeWidth={16}
     />
   );
 }

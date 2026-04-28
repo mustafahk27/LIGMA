@@ -31,11 +31,14 @@ export interface CreateNodeInput {
 
 /** Default geometry for each shape type. */
 const DEFAULTS: Record<NodeKind, { width: number; height: number; fill: string; stroke: string }> = {
-  sticky:  { width: 180, height: 140, fill: '#fde68a', stroke: '#0000' },
-  text:    { width: 260, height: 56,  fill: '#0000',   stroke: '#0000' },
-  rect:    { width: 160, height: 100, fill: '#1c2740', stroke: '#4575f3' },
-  circle:  { width: 120, height: 120, fill: '#1c2740', stroke: '#8b5cf6' },
-  pen:     { width: 0,   height: 0,   fill: '#0000',   stroke: '#dce6f5' },
+  sticky:      { width: 180, height: 140, fill: '#fde68a', stroke: '#0000' },
+  text:        { width: 260, height: 56, fill: '#0000', stroke: '#0000' },
+  rect:        { width: 160, height: 100, fill: '#1c2740', stroke: '#4575f3' },
+  round_rect:  { width: 160, height: 100, fill: '#1c2740', stroke: '#22c55e' },
+  circle:      { width: 120, height: 120, fill: '#1c2740', stroke: '#8b5cf6' },
+  pen:         { width: 0, height: 0, fill: '#0000', stroke: '#dce6f5' },
+  line:        { width: 8, height: 8, fill: '#0000', stroke: '#dce6f5' },
+  arrow:       { width: 8, height: 8, fill: '#0000', stroke: '#4575f3' },
 };
 
 /**
@@ -57,6 +60,14 @@ export function createNode(input: CreateNodeInput): string {
     node.set('rotation', 0);
     node.set('fill', input.fill ?? def.fill);
     node.set('stroke', input.stroke ?? def.stroke);
+    if (input.type === 'rect') {
+      node.set('cornerRadius', 6);
+    } else if (input.type === 'round_rect') {
+      node.set('cornerRadius', 22);
+    } else {
+      node.set('cornerRadius', 0);
+    }
+
     node.set('points', input.points ?? []);
     node.set('author_id', input.author_id);
     node.set('created_at', Date.now());
@@ -150,6 +161,13 @@ export function nodeToSnapshot(map: NodeMap): NodeSnapshot {
     rotation: (map.get('rotation') as number) ?? 0,
     fill: (map.get('fill') as string) ?? '#1c2740',
     stroke: (map.get('stroke') as string) ?? '#0000',
+    cornerRadius: ((): number => {
+      const v = map.get('cornerRadius');
+      if (typeof v === 'number') return v;
+      if (type === 'rect') return 6;
+      if (type === 'round_rect') return 22;
+      return 0;
+    })(),
     points: (map.get('points') as number[]) ?? [],
     content: content instanceof Y.Text ? content.toString() : (content as string) ?? '',
     author_id: (map.get('author_id') as string) ?? '',

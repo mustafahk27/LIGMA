@@ -1,6 +1,14 @@
 import type * as Y from 'yjs';
 
-export type NodeKind = 'sticky' | 'text' | 'rect' | 'circle' | 'pen';
+export type NodeKind =
+  | 'sticky'
+  | 'text'
+  | 'rect'
+  | 'round_rect'
+  | 'circle'
+  | 'pen'
+  | 'line'
+  | 'arrow';
 
 export interface NodeAcl {
   /** When true only leads may mutate this node. */
@@ -23,6 +31,8 @@ export interface NodeSnapshot {
   rotation: number;
   fill: string;
   stroke: string;
+  /** Corner radius for `rect` / `round_rect` (canvas units). */
+  cornerRadius: number;
   /** Used by the pen tool — flat array [x0, y0, x1, y1, …] in stage coords. */
   points: number[];
   content: string;

@@ -62,11 +62,38 @@ const TOOLS: { id: Tool; label: string; icon: React.ReactNode }[] = [
     ),
   },
   {
+    id: 'round_rect',
+    label: 'Rounded rectangle (U)',
+    icon: (
+      <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+        <rect x="2" y="3.5" width="10" height="7" rx="2.5" stroke="currentColor" strokeWidth="1.3" />
+      </svg>
+    ),
+  },
+  {
     id: 'circle',
     label: 'Circle (C)',
     icon: (
       <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
         <circle cx="7" cy="7" r="5" stroke="currentColor" strokeWidth="1.3" />
+      </svg>
+    ),
+  },
+  {
+    id: 'line',
+    label: 'Line (L)',
+    icon: (
+      <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+        <path d="M2 11L12 3" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+      </svg>
+    ),
+  },
+  {
+    id: 'arrow',
+    label: 'Arrow (A)',
+    icon: (
+      <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+        <path d="M2 10L8.5 3.5M8.5 3.5H5M8.5 3.5V7" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
       </svg>
     ),
   },
@@ -169,7 +196,15 @@ export default function RoomPage() {
   /* ── Tool keyboard shortcuts ────────────────────────────────────────── */
   useEffect(() => {
     const map: Record<string, Tool> = {
-      v: 'select', s: 'sticky', t: 'text', r: 'rect', c: 'circle', p: 'pen',
+      v: 'select',
+      s: 'sticky',
+      t: 'text',
+      r: 'rect',
+      u: 'round_rect',
+      c: 'circle',
+      l: 'line',
+      a: 'arrow',
+      p: 'pen',
     };
     function onKey(e: KeyboardEvent) {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;

@@ -2,7 +2,16 @@ import { create } from 'zustand';
 import type { Role } from '@/lib/node-types';
 import { STICKY_PALETTE } from '@/lib/node-types';
 
-export type Tool = 'select' | 'sticky' | 'text' | 'rect' | 'circle' | 'pen';
+export type Tool =
+  | 'select'
+  | 'sticky'
+  | 'text'
+  | 'rect'
+  | 'round_rect'
+  | 'circle'
+  | 'pen'
+  | 'line'
+  | 'arrow';
 
 interface UiStore {
   // ── Tool / selection ─────────────────────────────────────────────────────

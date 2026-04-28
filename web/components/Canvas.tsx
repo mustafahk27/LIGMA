@@ -156,7 +156,13 @@ export default function Canvas({ userId, role }: CanvasProps) {
     }
 
     const sel = nodes.find((n) => n.id === selectedNodeId);
-    if (!sel || sel.type === 'pen' || !canActOnNode(role, sel.acl)) {
+    if (
+      !sel ||
+      sel.type === 'pen' ||
+      sel.type === 'line' ||
+      sel.type === 'arrow' ||
+      !canActOnNode(role, sel.acl)
+    ) {
       clear();
       return;
     }
@@ -319,14 +325,23 @@ export default function Canvas({ userId, role }: CanvasProps) {
       return;
     }
 
-    if (tool === 'rect' || tool === 'circle' || tool === 'pen') {
+    if (
+      tool === 'rect' ||
+      tool === 'round_rect' ||
+      tool === 'circle' ||
+      tool === 'pen' ||
+      tool === 'line' ||
+      tool === 'arrow'
+    ) {
+      const isPen = tool === 'pen';
+      const isSeg = tool === 'line' || tool === 'arrow';
       const id = createNode({
         type: tool,
         x: pos.x,
         y: pos.y,
-        width: tool === 'pen' ? 0 : 1,
-        height: tool === 'pen' ? 0 : 1,
-        points: tool === 'pen' ? [0, 0] : [],
+        width: isPen ? 0 : 1,
+        height: isPen ? 0 : 1,
+        points: isPen ? [0, 0] : isSeg ? [0, 0, Math.max(8, 1), 0] : [],
         author_id: userId,
       });
       dragState.current = { nodeId: id, startStage: pos, type: tool };
@@ -339,7 +354,7 @@ export default function Canvas({ userId, role }: CanvasProps) {
     const drag = dragState.current;
     if (!drag || !drag.nodeId) return;
 
-    if (drag.type === 'rect' || drag.type === 'circle') {
+    if (drag.type === 'rect' || drag.type === 'round_rect' || drag.type === 'circle') {
       const dx = pos.x - drag.startStage.x;
       const dy = pos.y - drag.startStage.y;
       const w = Math.abs(dx);
@@ -351,6 +366,20 @@ export default function Canvas({ userId, role }: CanvasProps) {
         width: Math.max(w, 8),
         height: Math.max(h, 8),
       });
+    } else if (drag.type === 'line' || drag.type === 'arrow') {
+      const sx = drag.startStage.x;
+      const sy = drag.startStage.y;
+      const ex = pos.x;
+      const ey = pos.y;
+      const x0 = Math.min(sx, ex);
+      const y0 = Math.min(sy, ey);
+      updateNode(drag.nodeId, {
+        x: x0,
+        y: y0,
+        width: Math.max(8, Math.abs(ex - sx)),
+        height: Math.max(8, Math.abs(ey - sy)),
+        points: [sx - x0, sy - y0, ex - x0, ey - y0],
+      });
     } else if (drag.type === 'pen') {
       const local = [pos.x - drag.startStage.x, pos.y - drag.startStage.y];
       appendPenPoints(drag.nodeId, local);
@@ -359,11 +388,21 @@ export default function Canvas({ userId, role }: CanvasProps) {
 
   function handleContainerMouseUp() {
     if (dragState.current) {
-      // Pen strokes with one or zero points feel like accidental clicks
-      const id = dragState.current.nodeId;
-      if (id && dragState.current.type === 'pen') {
+      const d = dragState.current;
+      const id = d.nodeId;
+      const t = d.type;
+
+      if (id && t === 'pen') {
         const node = nodes.find((n) => n.id === id);
         if (node && node.points.length < 4) deleteNode(id);
+      } else if (id && (t === 'line' || t === 'arrow')) {
+        const node = nodes.find((n) => n.id === id);
+        const p = node?.points;
+        if (p && p.length >= 4) {
+          const dx = (p[2] ?? 0) - (p[0] ?? 0);
+          const dy = (p[3] ?? 0) - (p[1] ?? 0);
+          if (dx * dx + dy * dy < 36) deleteNode(id);
+        }
       }
       dragState.current = null;
     }
@@ -387,6 +426,8 @@ export default function Canvas({ userId, role }: CanvasProps) {
       tool === 'select' &&
       !editingNodeId &&
       selectedNode.type !== 'pen' &&
+      selectedNode.type !== 'line' &&
+      selectedNode.type !== 'arrow' &&
       canActOnNode(role, selectedNode.acl),
   );
 
@@ -497,8 +538,11 @@ function EmptyHint({ tool }: { tool: Tool }) {
     sticky: 'Click anywhere to place a sticky note',
     text: 'Click anywhere to add text',
     rect: 'Click and drag to draw a rectangle',
-    circle: 'Click and drag to draw a circle',
+    round_rect: 'Click and drag to draw a rounded rectangle',
+    circle: 'Click and drag to draw an ellipse',
     pen: 'Click and drag to draw freehand',
+    line: 'Click and drag for a straight line',
+    arrow: 'Click and drag for an arrow',
   };
   return (
     <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none select-none">
