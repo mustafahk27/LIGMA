@@ -3,6 +3,7 @@
 import * as Y from 'yjs';
 import { ydoc, nodes } from './yjs';
 import type { NodeKind, NodeSnapshot, NodeMap, NodeAcl } from './node-types';
+import { DEFAULT_STICKY_TEXT, DEFAULT_TEXT_NODE_TEXT } from './node-types';
 
 /** Random short id for new nodes. */
 function freshId(): string {
@@ -20,16 +21,57 @@ export interface CreateNodeInput {
   points?: number[];
   content?: string;
   author_id: string;
+  /** Sticky + text nodes only — rich text styling. */
+  fontSize?: number;
+  textColor?: string;
+  fontBold?: boolean;
+  fontItalic?: boolean;
+  textUnderline?: boolean;
 }
 
 /** Default geometry for each shape type. */
 const DEFAULTS: Record<NodeKind, { width: number; height: number; fill: string; stroke: string }> = {
-  sticky:  { width: 180, height: 140, fill: '#fde68a', stroke: '#0000' },
-  text:    { width: 220, height: 40,  fill: '#0000',   stroke: '#0000' },
-  rect:    { width: 160, height: 100, fill: '#1c2740', stroke: '#4575f3' },
-  circle:  { width: 120, height: 120, fill: '#1c2740', stroke: '#8b5cf6' },
-  pen:     { width: 0,   height: 0,   fill: '#0000',   stroke: '#dce6f5' },
+  sticky:      { width: 180, height: 140, fill: '#fde68a', stroke: '#0000' },
+  text:        { width: 260, height: 56, fill: '#0000', stroke: '#0000' },
+  rect:        { width: 160, height: 100, fill: '#1c2740', stroke: '#4575f3' },
+  round_rect:  { width: 160, height: 100, fill: '#1c2740', stroke: '#22c55e' },
+  circle:      { width: 120, height: 120, fill: '#1c2740', stroke: '#8b5cf6' },
+  pen:         { width: 0, height: 0, fill: '#0000', stroke: '#dce6f5' },
+  line:        { width: 8, height: 8, fill: '#0000', stroke: '#dce6f5' },
+  arrow:       { width: 8, height: 8, fill: '#0000', stroke: '#4575f3' },
 };
+
+/** Stacking key in Yjs — higher draws on top. Missing `z_index` uses `created_at` (legacy). */
+export function layerSortKeyFromMap(map: NodeMap): number {
+  const zi = map.get('z_index');
+  if (typeof zi === 'number') return zi;
+  return (map.get('created_at') as number) ?? 0;
+}
+
+function maxLayerSortKey(): number {
+  let max = 0;
+  nodes.forEach((map) => {
+    if (!(map instanceof Y.Map)) return;
+    const k = layerSortKeyFromMap(map);
+    if (k > max) max = k;
+  });
+  return max;
+}
+
+function allocTopLayerKey(): number {
+  return maxLayerSortKey() + 1;
+}
+
+function minLayerSortKeyExcluding(selfId: string): number | null {
+  let min = Infinity;
+  nodes.forEach((map, key) => {
+    if (key === selfId) return;
+    if (!(map instanceof Y.Map)) return;
+    const k = layerSortKeyFromMap(map);
+    if (k < min) min = k;
+  });
+  return min === Infinity ? null : min;
+}
 
 /**
  * Create a node and add it to the shared Yjs map atomically.
@@ -50,11 +92,36 @@ export function createNode(input: CreateNodeInput): string {
     node.set('rotation', 0);
     node.set('fill', input.fill ?? def.fill);
     node.set('stroke', input.stroke ?? def.stroke);
+    if (input.type === 'rect') {
+      node.set('cornerRadius', 6);
+    } else if (input.type === 'round_rect') {
+      node.set('cornerRadius', 22);
+    } else {
+      node.set('cornerRadius', 0);
+    }
+
     node.set('points', input.points ?? []);
     node.set('author_id', input.author_id);
     node.set('created_at', Date.now());
+    node.set('z_index', allocTopLayerKey());
     node.set('acl', { locked: false });
     node.set('intent', null);
+
+    if (input.type === 'sticky') {
+      const s = DEFAULT_STICKY_TEXT;
+      node.set('fontSize', input.fontSize ?? s.fontSize);
+      node.set('textColor', input.textColor ?? s.textColor);
+      node.set('fontBold', input.fontBold ?? s.fontBold);
+      node.set('fontItalic', input.fontItalic ?? s.fontItalic);
+      node.set('textUnderline', input.textUnderline ?? s.textUnderline);
+    } else if (input.type === 'text') {
+      const s = DEFAULT_TEXT_NODE_TEXT;
+      node.set('fontSize', input.fontSize ?? s.fontSize);
+      node.set('textColor', input.textColor ?? s.textColor);
+      node.set('fontBold', input.fontBold ?? s.fontBold);
+      node.set('fontItalic', input.fontItalic ?? s.fontItalic);
+      node.set('textUnderline', input.textUnderline ?? s.textUnderline);
+    }
 
     const text = new Y.Text();
     if (input.content) text.insert(0, input.content);
@@ -69,7 +136,9 @@ export function createNode(input: CreateNodeInput): string {
 /** Patch one or more fields of a node inside a single Yjs transaction. */
 export function updateNode(
   id: string,
-  patch: Partial<Omit<NodeSnapshot, 'id' | 'content' | 'created_at' | 'author_id'>>,
+  patch: Partial<
+    Omit<NodeSnapshot, 'id' | 'content' | 'created_at' | 'author_id'>
+  >,
 ): void {
   const node = nodes.get(id);
   if (!node) return;
@@ -110,9 +179,14 @@ export function setNodeAcl(id: string, acl: NodeAcl): void {
 /** Read-only conversion of a Y.Map node into a plain object for rendering. */
 export function nodeToSnapshot(map: NodeMap): NodeSnapshot {
   const content = map.get('content');
+  const type = (map.get('type') as NodeKind) ?? 'sticky';
+  const stickyDefaults = DEFAULT_STICKY_TEXT;
+  const textDefaults = DEFAULT_TEXT_NODE_TEXT;
+  const textBase = type === 'sticky' ? stickyDefaults : textDefaults;
+
   return {
     id: (map.get('id') as string) ?? '',
-    type: (map.get('type') as NodeKind) ?? 'sticky',
+    type,
     x: (map.get('x') as number) ?? 0,
     y: (map.get('y') as number) ?? 0,
     width: (map.get('width') as number) ?? 0,
@@ -120,13 +194,147 @@ export function nodeToSnapshot(map: NodeMap): NodeSnapshot {
     rotation: (map.get('rotation') as number) ?? 0,
     fill: (map.get('fill') as string) ?? '#1c2740',
     stroke: (map.get('stroke') as string) ?? '#0000',
+    cornerRadius: ((): number => {
+      const v = map.get('cornerRadius');
+      if (typeof v === 'number') return v;
+      if (type === 'rect') return 6;
+      if (type === 'round_rect') return 22;
+      return 0;
+    })(),
     points: (map.get('points') as number[]) ?? [],
     content: content instanceof Y.Text ? content.toString() : (content as string) ?? '',
     author_id: (map.get('author_id') as string) ?? '',
     created_at: (map.get('created_at') as number) ?? 0,
+    z_index: layerSortKeyFromMap(map),
     acl: ((map.get('acl') as NodeAcl) ?? { locked: false }),
     intent: (map.get('intent') as string | null) ?? null,
+    fontSize: typeof map.get('fontSize') === 'number' ? (map.get('fontSize') as number) : textBase.fontSize,
+    textColor: typeof map.get('textColor') === 'string' ? (map.get('textColor') as string) : textBase.textColor,
+    fontBold: typeof map.get('fontBold') === 'boolean' ? (map.get('fontBold') as boolean) : textBase.fontBold,
+    fontItalic: typeof map.get('fontItalic') === 'boolean' ? (map.get('fontItalic') as boolean) : textBase.fontItalic,
+    textUnderline:
+      typeof map.get('textUnderline') === 'boolean'
+        ? (map.get('textUnderline') as boolean)
+        : textBase.textUnderline,
   };
+}
+
+/** All nodes sorted bottom → top (render order). */
+export function getSortedNodeSnapshots(): NodeSnapshot[] {
+  const out: NodeSnapshot[] = [];
+  nodes.forEach((map) => {
+    if (map instanceof Y.Map) out.push(nodeToSnapshot(map));
+  });
+  out.sort((a, b) => {
+    if (a.z_index !== b.z_index) return a.z_index - b.z_index;
+    return a.created_at - b.created_at;
+  });
+  return out;
+}
+
+export function layerBringForward(id: string): void {
+  const sorted = getSortedNodeSnapshots();
+  const idx = sorted.findIndex((n) => n.id === id);
+  if (idx < 0 || idx >= sorted.length - 1) return;
+  const lower = sorted[idx];
+  const higher = sorted[idx + 1];
+  const a = nodes.get(lower.id);
+  const b = nodes.get(higher.id);
+  if (!(a instanceof Y.Map) || !(b instanceof Y.Map)) return;
+  const za = layerSortKeyFromMap(a);
+  const zb = layerSortKeyFromMap(b);
+  ydoc.transact(() => {
+    if (za === zb) {
+      a.set('z_index', zb + 1);
+    } else {
+      a.set('z_index', zb);
+      b.set('z_index', za);
+    }
+  }, 'local');
+}
+
+export function layerSendBackward(id: string): void {
+  const sorted = getSortedNodeSnapshots();
+  const idx = sorted.findIndex((n) => n.id === id);
+  if (idx <= 0) return;
+  const cur = sorted[idx];
+  const prev = sorted[idx - 1];
+  const a = nodes.get(cur.id);
+  const b = nodes.get(prev.id);
+  if (!(a instanceof Y.Map) || !(b instanceof Y.Map)) return;
+  const za = layerSortKeyFromMap(a);
+  const zb = layerSortKeyFromMap(b);
+  ydoc.transact(() => {
+    if (za === zb) {
+      a.set('z_index', zb - 1);
+    } else {
+      a.set('z_index', zb);
+      b.set('z_index', za);
+    }
+  }, 'local');
+}
+
+export function layerBringToFront(id: string): void {
+  const map = nodes.get(id);
+  if (!(map instanceof Y.Map)) return;
+  ydoc.transact(() => {
+    map.set('z_index', allocTopLayerKey());
+  }, 'local');
+}
+
+export function layerSendToBack(id: string): void {
+  const map = nodes.get(id);
+  if (!(map instanceof Y.Map)) return;
+  ydoc.transact(() => {
+    const belowOthers = minLayerSortKeyExcluding(id);
+    map.set('z_index', belowOthers === null ? -1 : belowOthers - 1);
+  }, 'local');
+}
+
+/**
+ * Duplicate a node (offset position, new id; copy goes on top).
+ * Returns the new node id, or null if missing.
+ */
+export function duplicateNode(sourceId: string, authorId: string): string | null {
+  const src = nodes.get(sourceId);
+  if (!(src instanceof Y.Map)) return null;
+
+  const snap = nodeToSnapshot(src);
+  const newId = freshId();
+  const OFFSET = 12;
+
+  ydoc.transact(() => {
+    const node = new Y.Map();
+    node.set('id', newId);
+    node.set('type', snap.type);
+    node.set('x', snap.x + OFFSET);
+    node.set('y', snap.y + OFFSET);
+    node.set('width', snap.width);
+    node.set('height', snap.height);
+    node.set('rotation', snap.rotation);
+    node.set('fill', snap.fill);
+    node.set('stroke', snap.stroke);
+    node.set('cornerRadius', snap.cornerRadius);
+    node.set('points', [...snap.points]);
+    node.set('author_id', authorId);
+    node.set('created_at', Date.now());
+    node.set('z_index', maxLayerSortKey() + 1);
+    node.set('acl', snap.acl);
+    node.set('intent', snap.intent);
+    node.set('fontSize', snap.fontSize);
+    node.set('textColor', snap.textColor);
+    node.set('fontBold', snap.fontBold);
+    node.set('fontItalic', snap.fontItalic);
+    node.set('textUnderline', snap.textUnderline);
+
+    const text = new Y.Text();
+    if (snap.content) text.insert(0, snap.content);
+    node.set('content', text);
+
+    nodes.set(newId, node);
+  }, 'local');
+
+  return newId;
 }
 
 /** Returns the live Y.Text for a node (used by EditableText). */

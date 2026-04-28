@@ -1,17 +1,25 @@
 'use client';
 
 import { useLayoutEffect, useRef, useState } from 'react';
-import { Group, Rect, Circle, Line, Text } from 'react-konva';
+import { Group, Rect, Ellipse, Line, Arrow, Text } from 'react-konva';
 import type Konva from 'konva';
 import type { NodeSnapshot, Role } from '@/lib/node-types';
 import { canActOnNode } from '@/lib/node-types';
 import { updateNode } from '@/lib/nodes';
 import { nodeLocalContentBounds } from '@/lib/selection-bounds';
+import { dimHex, konvaFontStyle } from '@/lib/text-style';
 
 interface ShapeRendererProps {
   node: NodeSnapshot;
+  /** Index in the sorted stack (0 = bottom, larger = on top). Required for Konva draw order. */
+  stackIndex: number;
   isSelected: boolean;
   isEditing: boolean;
+  /** When true (select tool, can edit, non-pen), Transformer draws handles — hide duplicate selection chrome. */
+  showResizeChrome: boolean;
+  /** While a transform is in progress — disable node drag so resizing doesn't fight pointer. */
+  isTransforming: boolean;
+  setGroupRef: (id: string, node: Konva.Group | null) => void;
   role: Role;
   onSelect: (id: string) => void;
   onDoubleClick: (id: string) => void;
@@ -26,8 +34,12 @@ interface ShapeRendererProps {
  */
 export function ShapeRenderer({
   node,
+  stackIndex,
   isSelected,
   isEditing,
+  showResizeChrome,
+  isTransforming,
+  setGroupRef,
   role,
   onSelect,
   onDoubleClick,
@@ -35,7 +47,7 @@ export function ShapeRenderer({
   onDragEnd,
 }: ShapeRendererProps) {
   const writable = canActOnNode(role, node.acl);
-  const draggable = writable && !isEditing;
+  const draggable = writable && !isEditing && !(isSelected && isTransforming);
 
   function handleDragEnd(e: Konva.KonvaEventObject<DragEvent>) {
     onDragEnd(node.id, e.target.x(), e.target.y());
@@ -43,6 +55,9 @@ export function ShapeRenderer({
 
   return (
     <Group
+      ref={(el) => setGroupRef(node.id, el)}
+      zIndex={stackIndex}
+      name={node.id}
       x={node.x}
       y={node.y}
       rotation={node.rotation}
@@ -66,8 +81,13 @@ export function ShapeRenderer({
         if (writable) onDoubleClick(node.id);
       }}
     >
-      <ShapeBody node={node} isEditing={isEditing} isSelected={isSelected} />
-      {isSelected && node.type !== 'text' && <SelectionOutline node={node} />}
+      <ShapeBody node={node} isEditing={isEditing} isSelected={isSelected} showResizeChrome={showResizeChrome} />
+      {isSelected &&
+        node.type !== 'text' &&
+        (!showResizeChrome ||
+          node.type === 'pen' ||
+          node.type === 'line' ||
+          node.type === 'arrow') && <SelectionOutline node={node} />}
       {node.acl.locked && <LockBadge node={node} />}
     </Group>
   );
@@ -79,22 +99,31 @@ function ShapeBody({
   node,
   isEditing,
   isSelected,
+  showResizeChrome,
 }: {
   node: NodeSnapshot;
   isEditing: boolean;
   isSelected: boolean;
+  showResizeChrome: boolean;
 }) {
   switch (node.type) {
     case 'sticky':
       return <StickyBody node={node} isEditing={isEditing} />;
     case 'text':
-      return <TextBody node={node} isEditing={isEditing} isSelected={isSelected} />;
+      return (
+        <TextBody node={node} isEditing={isEditing} isSelected={isSelected} showResizeChrome={showResizeChrome} />
+      );
     case 'rect':
+    case 'round_rect':
       return <RectBody node={node} />;
     case 'circle':
       return <CircleBody node={node} />;
     case 'pen':
       return <PenBody node={node} />;
+    case 'line':
+      return <LineSegmentBody node={node} />;
+    case 'arrow':
+      return <ArrowSegmentBody node={node} />;
     default:
       return null;
   }
@@ -103,6 +132,7 @@ function ShapeBody({
 /* ── Per-type bodies ───────────────────────────────────────────────────────── */
 
 function StickyBody({ node, isEditing }: { node: NodeSnapshot; isEditing: boolean }) {
+  const fill = node.content ? node.textColor : dimHex(node.textColor, 0.38);
   return (
     <>
       <Rect
@@ -122,13 +152,14 @@ function StickyBody({ node, isEditing }: { node: NodeSnapshot; isEditing: boolea
           y={12}
           width={node.width - 24}
           height={node.height - 24}
-          fontSize={14}
-          fontStyle={node.content ? 'normal' : 'italic'}
-          fill={node.content ? 'rgba(0,0,0,0.78)' : 'rgba(0,0,0,0.35)'}
+          fontSize={node.fontSize}
+          fontStyle={node.content ? konvaFontStyle(node.fontBold, node.fontItalic) : 'italic'}
+          fill={fill}
           fontFamily="Inter, system-ui, sans-serif"
           lineHeight={1.4}
           wrap="word"
           listening={false}
+          textDecoration={node.textUnderline ? 'underline' : undefined}
         />
       )}
       {node.intent && <IntentBadge intent={node.intent} />}
@@ -140,10 +171,12 @@ function TextBody({
   node,
   isEditing,
   isSelected,
+  showResizeChrome,
 }: {
   node: NodeSnapshot;
   isEditing: boolean;
   isSelected: boolean;
+  showResizeChrome: boolean;
 }) {
   const textRef = useRef<Konva.Text>(null);
   const [layoutH, setLayoutH] = useState(() => Math.max(node.height, 24));
@@ -156,11 +189,11 @@ function TextBody({
       return;
     }
     const measured = Math.ceil(t.height());
-    setLayoutH(Math.max(measured, 24));
-    if (measured > 0 && Math.abs(measured - node.height) >= 1) {
+    setLayoutH(Math.max(measured, node.height, 24));
+    if (measured > node.height + 1) {
       updateNode(node.id, { height: measured });
     }
-  }, [node.content, node.width, node.height, isEditing, node.id]);
+  }, [node.content, node.width, node.height, node.fontSize, node.fontBold, node.fontItalic, node.textColor, isEditing, node.id]);
 
   const outlineH = Math.max(layoutH, node.height, 24);
 
@@ -170,15 +203,18 @@ function TextBody({
         ref={textRef}
         text={isEditing ? '' : node.content || 'Text'}
         width={node.width}
-        fontSize={20}
-        fontStyle={node.content ? 'normal' : 'italic'}
-        fill={node.content ? '#dce6f5' : '#3d4f6e'}
+        fontSize={node.fontSize}
+        fontStyle={node.content ? konvaFontStyle(node.fontBold, node.fontItalic) : 'italic'}
+        fill={
+          node.content ? node.textColor : dimHex(node.textColor, 0.42)
+        }
         fontFamily="Inter, system-ui, sans-serif"
         lineHeight={1.3}
         wrap="word"
         listening={!isEditing}
+        textDecoration={node.textUnderline ? 'underline' : undefined}
       />
-      {isSelected && (
+      {isSelected && !showResizeChrome && (
         <Rect
           x={-4}
           y={-4}
@@ -196,6 +232,8 @@ function TextBody({
 }
 
 function RectBody({ node }: { node: NodeSnapshot }) {
+  const rCap = Math.min(node.width / 2, node.height / 2);
+  const r = Math.min(Math.max(0, node.cornerRadius || 6), rCap);
   return (
     <Rect
       width={node.width}
@@ -203,18 +241,20 @@ function RectBody({ node }: { node: NodeSnapshot }) {
       fill={node.fill}
       stroke={node.stroke}
       strokeWidth={2}
-      cornerRadius={6}
+      cornerRadius={r}
     />
   );
 }
 
 function CircleBody({ node }: { node: NodeSnapshot }) {
-  const r = Math.max(node.width, node.height) / 2;
+  const rx = node.width / 2;
+  const ry = node.height / 2;
   return (
-    <Circle
-      x={r}
-      y={r}
-      radius={r}
+    <Ellipse
+      x={rx}
+      y={ry}
+      radiusX={rx}
+      radiusY={ry}
       fill={node.fill}
       stroke={node.stroke}
       strokeWidth={2}
@@ -236,16 +276,51 @@ function PenBody({ node }: { node: NodeSnapshot }) {
   );
 }
 
+function LineSegmentBody({ node }: { node: NodeSnapshot }) {
+  const pts = node.points;
+  if (pts.length < 4) return null;
+  return (
+    <Line
+      points={pts}
+      stroke={node.stroke}
+      strokeWidth={2.5}
+      lineCap="round"
+      lineJoin="round"
+      hitStrokeWidth={16}
+    />
+  );
+}
+
+function ArrowSegmentBody({ node }: { node: NodeSnapshot }) {
+  const pts = node.points;
+  if (pts.length < 4) return null;
+  return (
+    <Arrow
+      points={pts}
+      stroke={node.stroke}
+      fill={node.stroke}
+      strokeWidth={2.5}
+      pointerLength={12}
+      pointerWidth={12}
+      lineCap="round"
+      lineJoin="round"
+      hitStrokeWidth={16}
+    />
+  );
+}
+
 /* ── Decorations ───────────────────────────────────────────────────────────── */
 
 function SelectionOutline({ node }: { node: NodeSnapshot }) {
   if (node.type === 'circle') {
-    const r = Math.max(node.width, node.height) / 2;
+    const rx = node.width / 2 + 4;
+    const ry = node.height / 2 + 4;
     return (
-      <Circle
-        x={r}
-        y={r}
-        radius={r + 4}
+      <Ellipse
+        x={node.width / 2}
+        y={node.height / 2}
+        radiusX={rx}
+        radiusY={ry}
         stroke="#4575f3"
         strokeWidth={1.5}
         dash={[6, 4]}

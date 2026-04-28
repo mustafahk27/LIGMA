@@ -1,6 +1,14 @@
 import type * as Y from 'yjs';
 
-export type NodeKind = 'sticky' | 'text' | 'rect' | 'circle' | 'pen';
+export type NodeKind =
+  | 'sticky'
+  | 'text'
+  | 'rect'
+  | 'round_rect'
+  | 'circle'
+  | 'pen'
+  | 'line'
+  | 'arrow';
 
 export interface NodeAcl {
   /** When true only leads may mutate this node. */
@@ -23,13 +31,26 @@ export interface NodeSnapshot {
   rotation: number;
   fill: string;
   stroke: string;
+  /** Corner radius for `rect` / `round_rect` (canvas units). */
+  cornerRadius: number;
   /** Used by the pen tool — flat array [x0, y0, x1, y1, …] in stage coords. */
   points: number[];
   content: string;
   author_id: string;
   created_at: number;
+  /** Stacking order — higher draws on top. Mirrors `created_at` when unset in Yjs (see `nodeToSnapshot`). */
+  z_index: number;
   acl: NodeAcl;
   intent: string | null;
+  /**
+   * Rich text (sticky + text). Other node types ignore these; defaults are filled in
+   * `nodeToSnapshot` when keys are missing for backward compatibility.
+   */
+  fontSize: number;
+  textColor: string;
+  fontBold: boolean;
+  fontItalic: boolean;
+  textUnderline: boolean;
 }
 
 export type NodeMap = Y.Map<unknown>;
@@ -41,6 +62,25 @@ export const STICKY_PALETTE = [
   '#86efac',
   '#c4b5fd',
 ] as const;
+
+export const DEFAULT_STICKY_TEXT = {
+  fontSize: 14,
+  textColor: '#1c1917',
+  fontBold: false,
+  fontItalic: false,
+  textUnderline: false,
+} as const;
+
+export const DEFAULT_TEXT_NODE_TEXT = {
+  fontSize: 20,
+  textColor: '#dce6f5',
+  fontBold: false,
+  fontItalic: false,
+  textUnderline: false,
+} as const;
+
+/** Preset steps for the format bar font-size control. */
+export const FONT_SIZE_OPTIONS = [12, 14, 16, 18, 20, 24, 28, 32] as const;
 
 export type Role = 'lead' | 'contributor' | 'viewer';
 

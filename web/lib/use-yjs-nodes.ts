@@ -1,9 +1,8 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import * as Y from 'yjs';
 import { nodes } from './yjs';
-import { nodeToSnapshot } from './nodes';
+import { getSortedNodeSnapshots } from './nodes';
 import type { NodeSnapshot } from './node-types';
 
 /**
@@ -28,11 +27,5 @@ export function useYjsNodes(): NodeSnapshot[] {
 }
 
 function collect(): NodeSnapshot[] {
-  const out: NodeSnapshot[] = [];
-  nodes.forEach((map) => {
-    if (map instanceof Y.Map) out.push(nodeToSnapshot(map));
-  });
-  // Stable z-order: oldest first, newest on top.
-  out.sort((a, b) => a.created_at - b.created_at);
-  return out;
+  return getSortedNodeSnapshots();
 }

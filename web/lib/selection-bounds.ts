@@ -16,13 +16,35 @@ export function nodeLocalContentBounds(node: NodeSnapshot): {
   switch (node.type) {
     case 'pen':
       return penBounds(node.points);
-    case 'circle': {
-      const s = Math.max(node.width, node.height);
-      return { x: 0, y: 0, width: s, height: s };
-    }
+    case 'line':
+    case 'arrow':
+      return segmentBounds(node.points);
+    case 'circle':
+      return { x: 0, y: 0, width: node.width, height: node.height };
     default:
       return { x: 0, y: 0, width: node.width, height: node.height };
   }
+}
+
+function segmentBounds(pts: number[]): { x: number; y: number; width: number; height: number } {
+  if (pts.length < 4) {
+    return { x: 0, y: 0, width: 8, height: 8 };
+  }
+  const x1 = pts[0] ?? 0;
+  const y1 = pts[1] ?? 0;
+  const x2 = pts[2] ?? 0;
+  const y2 = pts[3] ?? 0;
+  const minX = Math.min(x1, x2);
+  const maxX = Math.max(x1, x2);
+  const minY = Math.min(y1, y2);
+  const maxY = Math.max(y1, y2);
+  const p = PEN_STROKE_PAD;
+  return {
+    x: minX - p,
+    y: minY - p,
+    width: Math.max(maxX - minX + 2 * p, 8),
+    height: Math.max(maxY - minY + 2 * p, 8),
+  };
 }
 
 function penBounds(points: number[]): { x: number; y: number; width: number; height: number } {

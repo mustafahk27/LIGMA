@@ -1,7 +1,17 @@
 import { create } from 'zustand';
 import type { Role } from '@/lib/node-types';
+import { STICKY_PALETTE } from '@/lib/node-types';
 
-export type Tool = 'select' | 'sticky' | 'text' | 'rect' | 'circle' | 'pen';
+export type Tool =
+  | 'select'
+  | 'sticky'
+  | 'text'
+  | 'rect'
+  | 'round_rect'
+  | 'circle'
+  | 'pen'
+  | 'line'
+  | 'arrow';
 
 interface UiStore {
   // ── Tool / selection ─────────────────────────────────────────────────────
@@ -11,6 +21,10 @@ interface UiStore {
   setTool: (tool: Tool) => void;
   setSelected: (id: string | null) => void;
   setEditing: (id: string | null) => void;
+
+  /** Next sticky placed with `createNode` uses this sticky paper color (synced when picking in format bar). */
+  stickyDraftFill: string;
+  setStickyDraftFill: (hex: string) => void;
 
   // ── Stage transform (pan + zoom) ─────────────────────────────────────────
   stageScale: number;
@@ -29,6 +43,9 @@ export const useUiStore = create<UiStore>((set) => ({
   setTool: (tool) => set({ tool }),
   setSelected: (selectedNodeId) => set({ selectedNodeId }),
   setEditing: (editingNodeId) => set({ editingNodeId }),
+
+  stickyDraftFill: STICKY_PALETTE[0]!,
+  setStickyDraftFill: (stickyDraftFill) => set({ stickyDraftFill }),
 
   stageScale: 1,
   stagePos: { x: 0, y: 0 },

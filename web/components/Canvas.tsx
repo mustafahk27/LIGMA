@@ -6,16 +6,21 @@ import {
   useRef,
   useState,
 } from 'react';
-import { Stage, Layer } from 'react-konva';
+import { Stage, Layer, Transformer } from 'react-konva';
 import type Konva from 'konva';
 import { Cursors } from './Cursors';
 import { EditableText } from './EditableText';
 import { AclEditor } from './AclEditor';
 import { ShapeRenderer } from './ShapeRenderer';
+import { NodeFormatBar } from './NodeFormatBar';
+import { SelectionLayerBar } from './SelectionLayerBar';
 import {
   appendPenPoints,
   createNode,
   deleteNode,
+  duplicateNode,
+  layerBringForward,
+  layerSendBackward,
   updateNode,
 } from '@/lib/nodes';
 import { useYjsNodes } from '@/lib/use-yjs-nodes';
@@ -33,6 +38,66 @@ const MIN_SCALE = 0.2;
 const MAX_SCALE = 4;
 const CURSOR_THROTTLE_MS = 30;
 
+/** Minimum node size after transform (canvas units). */
+const MIN_RESIZE_W = 8;
+const MIN_RESIZE_H = 8;
+const MIN_TEXT_RESIZE_W = 40;
+const MIN_TEXT_RESIZE_H = 24;
+const MIN_STICKY_RESIZE_W = 72;
+const MIN_STICKY_RESIZE_H = 52;
+
+/** Text nodes: width-only resize (height follows content via EditableText / TextBody). */
+const TRANSFORM_ANCHORS_HORIZONTAL: string[] = ['middle-left', 'middle-right'];
+
+const TRANSFORM_ANCHORS_ALL: string[] = [
+  'top-left',
+  'top-center',
+  'top-right',
+  'middle-right',
+  'bottom-right',
+  'bottom-center',
+  'bottom-left',
+  'middle-left',
+];
+
+function commitGroupResize(group: Konva.Group, snapshot: NodeSnapshot): void {
+  const scaleX = group.scaleX();
+  const scaleY = group.scaleY();
+  const baseW = group.width() || snapshot.width;
+  const baseH = group.height() || snapshot.height;
+
+  let newW = Math.max(MIN_RESIZE_W, baseW * scaleX);
+  let newH = Math.max(MIN_RESIZE_H, baseH * scaleY);
+
+  if (snapshot.type === 'sticky') {
+    newW = Math.max(MIN_STICKY_RESIZE_W, newW);
+    newH = Math.max(MIN_STICKY_RESIZE_H, newH);
+  } else if (snapshot.type === 'text') {
+    newW = Math.max(MIN_TEXT_RESIZE_W, newW);
+    newH = Math.max(MIN_TEXT_RESIZE_H, newH);
+  }
+
+  group.scaleX(1);
+  group.scaleY(1);
+
+  if (snapshot.type === 'text') {
+    updateNode(snapshot.id, {
+      x: group.x(),
+      y: group.y(),
+      width: Math.round(newW * 100) / 100,
+      height: snapshot.height,
+    });
+    return;
+  }
+
+  updateNode(snapshot.id, {
+    x: group.x(),
+    y: group.y(),
+    width: Math.round(newW * 100) / 100,
+    height: Math.round(newH * 100) / 100,
+  });
+}
+
 export default function Canvas({ userId, role }: CanvasProps) {
   const stageRef = useRef<Konva.Stage | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -47,9 +112,20 @@ export default function Canvas({ userId, role }: CanvasProps) {
   const setStage = useUiStore((s) => s.setStage);
   const setSelected = useUiStore((s) => s.setSelected);
   const setEditing = useUiStore((s) => s.setEditing);
+  const stickyDraftFill = useUiStore((s) => s.stickyDraftFill);
   const setTool = useUiStore((s) => s.setTool);
 
   const nodes = useYjsNodes();
+
+  const transformerRef = useRef<Konva.Transformer>(null);
+  const groupRefs = useRef<Map<string, Konva.Group>>(new Map());
+  const [isTransforming, setIsTransforming] = useState(false);
+
+  const setGroupRef = useCallback((id: string, nodeEl: Konva.Group | null) => {
+    const m = groupRefs.current;
+    if (nodeEl) m.set(id, nodeEl);
+    else m.delete(id);
+  }, []);
 
   // Drag-creation state for rect/circle and freehand pen
   const dragState = useRef<{
@@ -58,7 +134,67 @@ export default function Canvas({ userId, role }: CanvasProps) {
     type: Tool;
   } | null>(null);
 
-  /* ── Resize observer ────────────────────────────────────────────────── */
+  /** Used for transformer anchor set + forceUpdate (must not reference `selectedNode` before it exists). */
+  const selectedNodeKind = selectedNodeId
+    ? nodes.find((n) => n.id === selectedNodeId)?.type
+    : undefined;
+
+  /* Keep handles in sync when switching text ↔ other shapes (anchor set changes). */
+  useEffect(() => {
+    transformerRef.current?.forceUpdate?.();
+  }, [selectedNodeKind]);
+
+  /* ── Konva Transformer — snap-to-node sizes (skips pen, locked/viewer) ── */
+  useEffect(() => {
+    const tr = transformerRef.current;
+    if (!tr || isTransforming) return;
+
+    const clear = () => {
+      tr.nodes([]);
+      tr.getLayer()?.batchDraw();
+    };
+
+    if (tool !== 'select' || editingNodeId || !selectedNodeId) {
+      clear();
+      return;
+    }
+
+    const sel = nodes.find((n) => n.id === selectedNodeId);
+    if (
+      !sel ||
+      sel.type === 'pen' ||
+      sel.type === 'line' ||
+      sel.type === 'arrow' ||
+      !canActOnNode(role, sel.acl)
+    ) {
+      clear();
+      return;
+    }
+
+    const g = groupRefs.current.get(selectedNodeId);
+    if (g) {
+      tr.nodes([g]);
+      tr.getLayer()?.batchDraw();
+    } else {
+      clear();
+    }
+  }, [nodes, selectedNodeId, tool, editingNodeId, role, isTransforming]);
+
+  function handleResizeStart() {
+    setIsTransforming(true);
+  }
+
+  function handleResizeEnd() {
+    const tr = transformerRef.current;
+    const grp = tr?.nodes()[0] as Konva.Group | undefined;
+    const snapshot = selectedNodeId
+      ? nodes.find((n) => n.id === selectedNodeId)
+      : undefined;
+    if (grp && snapshot) commitGroupResize(grp, snapshot);
+    setIsTransforming(false);
+  }
+
+  /* ── Resize observer — HTML container ───────────────────────────────── */
   useEffect(() => {
     if (!containerRef.current) return;
     const el = containerRef.current;
@@ -77,6 +213,32 @@ export default function Canvas({ userId, role }: CanvasProps) {
       if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) {
         return;
       }
+      if (
+        (e.ctrlKey || e.metaKey) &&
+        e.key.toLowerCase() === 'd' &&
+        selectedNodeId
+      ) {
+        e.preventDefault();
+        const node = nodes.find((n) => n.id === selectedNodeId);
+        if (node && canActOnNode(role, node.acl)) {
+          const nid = duplicateNode(selectedNodeId, userId);
+          if (nid) setSelected(nid);
+        }
+        return;
+      }
+      if (
+        (e.ctrlKey || e.metaKey) &&
+        (e.key === ']' || e.key === '[') &&
+        selectedNodeId
+      ) {
+        e.preventDefault();
+        const node = nodes.find((n) => n.id === selectedNodeId);
+        if (node && canActOnNode(role, node.acl)) {
+          if (e.key === ']') layerBringForward(selectedNodeId);
+          else layerSendBackward(selectedNodeId);
+        }
+        return;
+      }
       if ((e.key === 'Delete' || e.key === 'Backspace') && selectedNodeId) {
         const node = nodes.find((n) => n.id === selectedNodeId);
         if (node && canActOnNode(role, node.acl)) {
@@ -91,7 +253,7 @@ export default function Canvas({ userId, role }: CanvasProps) {
     }
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [selectedNodeId, nodes, role, setSelected, setEditing]);
+  }, [selectedNodeId, nodes, role, setSelected, setEditing, userId]);
 
   /* ── Coordinate helpers ─────────────────────────────────────────────── */
   /** Convert a pointer position (in screen coords) to stage (canvas) coords. */
@@ -183,6 +345,7 @@ export default function Canvas({ userId, role }: CanvasProps) {
         x: pos.x,
         y: pos.y,
         author_id: userId,
+        ...(tool === 'sticky' ? { fill: stickyDraftFill } : {}),
       });
       setSelected(id);
       // Auto-enter edit mode for fresh stickies / text blocks
@@ -192,14 +355,23 @@ export default function Canvas({ userId, role }: CanvasProps) {
       return;
     }
 
-    if (tool === 'rect' || tool === 'circle' || tool === 'pen') {
+    if (
+      tool === 'rect' ||
+      tool === 'round_rect' ||
+      tool === 'circle' ||
+      tool === 'pen' ||
+      tool === 'line' ||
+      tool === 'arrow'
+    ) {
+      const isPen = tool === 'pen';
+      const isSeg = tool === 'line' || tool === 'arrow';
       const id = createNode({
         type: tool,
         x: pos.x,
         y: pos.y,
-        width: tool === 'pen' ? 0 : 1,
-        height: tool === 'pen' ? 0 : 1,
-        points: tool === 'pen' ? [0, 0] : [],
+        width: isPen ? 0 : 1,
+        height: isPen ? 0 : 1,
+        points: isPen ? [0, 0] : isSeg ? [0, 0, Math.max(8, 1), 0] : [],
         author_id: userId,
       });
       dragState.current = { nodeId: id, startStage: pos, type: tool };
@@ -212,7 +384,7 @@ export default function Canvas({ userId, role }: CanvasProps) {
     const drag = dragState.current;
     if (!drag || !drag.nodeId) return;
 
-    if (drag.type === 'rect' || drag.type === 'circle') {
+    if (drag.type === 'rect' || drag.type === 'round_rect' || drag.type === 'circle') {
       const dx = pos.x - drag.startStage.x;
       const dy = pos.y - drag.startStage.y;
       const w = Math.abs(dx);
@@ -224,6 +396,20 @@ export default function Canvas({ userId, role }: CanvasProps) {
         width: Math.max(w, 8),
         height: Math.max(h, 8),
       });
+    } else if (drag.type === 'line' || drag.type === 'arrow') {
+      const sx = drag.startStage.x;
+      const sy = drag.startStage.y;
+      const ex = pos.x;
+      const ey = pos.y;
+      const x0 = Math.min(sx, ex);
+      const y0 = Math.min(sy, ey);
+      updateNode(drag.nodeId, {
+        x: x0,
+        y: y0,
+        width: Math.max(8, Math.abs(ex - sx)),
+        height: Math.max(8, Math.abs(ey - sy)),
+        points: [sx - x0, sy - y0, ex - x0, ey - y0],
+      });
     } else if (drag.type === 'pen') {
       const local = [pos.x - drag.startStage.x, pos.y - drag.startStage.y];
       appendPenPoints(drag.nodeId, local);
@@ -232,11 +418,21 @@ export default function Canvas({ userId, role }: CanvasProps) {
 
   function handleContainerMouseUp() {
     if (dragState.current) {
-      // Pen strokes with one or zero points feel like accidental clicks
-      const id = dragState.current.nodeId;
-      if (id && dragState.current.type === 'pen') {
+      const d = dragState.current;
+      const id = d.nodeId;
+      const t = d.type;
+
+      if (id && t === 'pen') {
         const node = nodes.find((n) => n.id === id);
         if (node && node.points.length < 4) deleteNode(id);
+      } else if (id && (t === 'line' || t === 'arrow')) {
+        const node = nodes.find((n) => n.id === id);
+        const p = node?.points;
+        if (p && p.length >= 4) {
+          const dx = (p[2] ?? 0) - (p[0] ?? 0);
+          const dy = (p[3] ?? 0) - (p[1] ?? 0);
+          if (dx * dx + dy * dy < 36) deleteNode(id);
+        }
       }
       dragState.current = null;
     }
@@ -251,6 +447,19 @@ export default function Canvas({ userId, role }: CanvasProps) {
   /* ── Render helpers ─────────────────────────────────────────────────── */
   const editingNode = nodes.find((n) => n.id === editingNodeId);
   const selectedNode = nodes.find((n) => n.id === selectedNodeId);
+
+  const transformAnchors =
+    selectedNode?.type === 'text' ? TRANSFORM_ANCHORS_HORIZONTAL : TRANSFORM_ANCHORS_ALL;
+
+  const showResizeChrome = Boolean(
+    selectedNode &&
+      tool === 'select' &&
+      !editingNodeId &&
+      selectedNode.type !== 'pen' &&
+      selectedNode.type !== 'line' &&
+      selectedNode.type !== 'arrow' &&
+      canActOnNode(role, selectedNode.acl),
+  );
 
   // Stage is only draggable when in select mode — drawing tools want the drag
   const stageDraggable = tool === 'select' && !editingNodeId;
@@ -280,12 +489,16 @@ export default function Canvas({ userId, role }: CanvasProps) {
         }}
       >
         <Layer>
-          {nodes.map((node) => (
+          {nodes.map((node, stackIndex) => (
             <ShapeRenderer
               key={node.id}
               node={node}
+              stackIndex={stackIndex}
               isSelected={node.id === selectedNodeId}
               isEditing={node.id === editingNodeId}
+              showResizeChrome={showResizeChrome && node.id === selectedNodeId}
+              isTransforming={isTransforming}
+              setGroupRef={setGroupRef}
               role={role}
               onSelect={(id) => setSelected(id)}
               onDoubleClick={(id) => setEditing(id)}
@@ -293,8 +506,43 @@ export default function Canvas({ userId, role }: CanvasProps) {
               onDragEnd={(id, x, y) => updateNode(id, { x, y })}
             />
           ))}
+          <Transformer
+            ref={transformerRef}
+            zIndex={nodes.length + 1}
+            rotateEnabled={false}
+            flipEnabled={false}
+            enabledAnchors={transformAnchors}
+            borderStroke="#4575f3"
+            borderStrokeWidth={1}
+            anchorStroke="#4575f3"
+            anchorCornerRadius={2}
+            anchorSize={11}
+            padding={2}
+            keepRatio={false}
+            boundBoxFunc={(oldBox, newBox) => {
+              const w = Math.max(newBox.width, 1);
+              const h = Math.max(newBox.height, 1);
+              if (w < MIN_RESIZE_W || h < MIN_RESIZE_H) return oldBox;
+              return newBox;
+            }}
+            onTransformStart={handleResizeStart}
+            onTransformEnd={handleResizeEnd}
+          />
         </Layer>
       </Stage>
+
+      {/* Layer + text / sticky formatting (bottom) */}
+      <div className="pointer-events-none absolute inset-x-0 bottom-3 z-[35] flex flex-col items-center gap-2 px-2">
+        {selectedNode && !editingNodeId && (
+          <SelectionLayerBar
+            orderedNodes={nodes}
+            node={selectedNode}
+            role={role}
+            userId={userId}
+          />
+        )}
+        <NodeFormatBar node={selectedNode ?? null} role={role} />
+      </div>
 
       {/* Cursor overlay (HTML on top of Konva) */}
       <Cursors stagePos={stagePos} stageScale={stageScale} />
@@ -330,8 +578,11 @@ function EmptyHint({ tool }: { tool: Tool }) {
     sticky: 'Click anywhere to place a sticky note',
     text: 'Click anywhere to add text',
     rect: 'Click and drag to draw a rectangle',
-    circle: 'Click and drag to draw a circle',
+    round_rect: 'Click and drag to draw a rounded rectangle',
+    circle: 'Click and drag to draw an ellipse',
     pen: 'Click and drag to draw freehand',
+    line: 'Click and drag for a straight line',
+    arrow: 'Click and drag for an arrow',
   };
   return (
     <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none select-none">
