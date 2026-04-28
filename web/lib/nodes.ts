@@ -21,6 +21,8 @@ export interface CreateNodeInput {
   points?: number[];
   content?: string;
   author_id: string;
+  /** Moves/deletes together with peers that share this id (template frames). */
+  group_id?: string;
   /** Sticky + text nodes only — rich text styling. */
   fontSize?: number;
   textColor?: string;
@@ -106,6 +108,7 @@ export function createNode(input: CreateNodeInput): string {
     node.set('z_index', allocTopLayerKey());
     node.set('acl', { locked: false });
     node.set('intent', null);
+    if (input.group_id) node.set('group_id', input.group_id);
 
     if (input.type === 'sticky') {
       const s = DEFAULT_STICKY_TEXT;
@@ -206,6 +209,7 @@ export function nodeToSnapshot(map: NodeMap): NodeSnapshot {
     author_id: (map.get('author_id') as string) ?? '',
     created_at: (map.get('created_at') as number) ?? 0,
     z_index: layerSortKeyFromMap(map),
+    group_id: typeof map.get('group_id') === 'string' ? (map.get('group_id') as string) : null,
     acl: ((map.get('acl') as NodeAcl) ?? { locked: false }),
     intent: (map.get('intent') as string | null) ?? null,
     fontSize: typeof map.get('fontSize') === 'number' ? (map.get('fontSize') as number) : textBase.fontSize,

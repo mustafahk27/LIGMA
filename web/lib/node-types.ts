@@ -40,6 +40,8 @@ export interface NodeSnapshot {
   created_at: number;
   /** Stacking order — higher draws on top. Mirrors `created_at` when unset in Yjs (see `nodeToSnapshot`). */
   z_index: number;
+  /** When set, this node moves/deletes together with peers (e.g. a template insertion). */
+  group_id: string | null;
   acl: NodeAcl;
   intent: string | null;
   /**
