@@ -1,5 +1,6 @@
 import { WebSocket } from 'ws';
 import type { AuthUser } from './middleware/auth.js';
+import type { Role } from './rbac.js';
 import * as Y from 'yjs';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -7,6 +8,8 @@ import * as Y from 'yjs';
 export interface RoomClient {
   ws: WebSocket;
   user: AuthUser;
+  /** Membership role used by the RBAC layer to authorise mutations. */
+  role: Role;
   /** Last event seq the client has confirmed receiving */
   lastSeq: number;
 }
@@ -49,10 +52,19 @@ export function joinRoom(
   clientId: string,
   ws: WebSocket,
   user: AuthUser,
+  role: Role,
   lastSeq: number = 0
 ): void {
   const room = getRoomOrCreate(roomId);
-  room.clients.set(clientId, { ws, user, lastSeq });
+  room.clients.set(clientId, { ws, user, role, lastSeq });
+}
+
+/**
+ * Look up a connected client's role for RBAC checks.
+ * Returns undefined if the client isn't currently in the room registry.
+ */
+export function getClientRole(roomId: string, clientId: string): Role | undefined {
+  return rooms.get(roomId)?.clients.get(clientId)?.role;
 }
 
 /**

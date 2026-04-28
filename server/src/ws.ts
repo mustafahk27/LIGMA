@@ -3,7 +3,8 @@ import type { Duplex } from 'stream';
 import { WebSocket, WebSocketServer } from 'ws';
 import { query } from './db.js';
 import type { AuthUser } from './middleware/auth.js';
-import { joinRoom, leaveRoom, broadcastJsonToRoom, roomSize } from './rooms.js';
+import { joinRoom, leaveRoom, broadcastJsonToRoom, roomSize, getClientRole } from './rooms.js';
+import type { Role } from './rbac.js';
 import { hydrateDocFromDB, applyAndBroadcast } from './ydoc-store.js';
 import { sendFullState, replayMissedEvents } from './sync.js';
 import type { SyncRequest } from './sync.js';
@@ -54,9 +55,10 @@ function handleConnection(
   ws: WebSocket,
   roomId: string,
   clientId: string,
-  user: AuthUser
+  user: AuthUser,
+  role: Role
 ): void {
-  console.log(`[ws] ${user.name} (${clientId}) connected to room ${roomId} (${roomSize(roomId)} total)`);
+  console.log(`[ws] ${user.name} (${clientId}, ${role}) connected to room ${roomId} (${roomSize(roomId)} total)`);
 
   ws.on('message', (raw: Buffer | ArrayBuffer | Buffer[], isBinary: boolean) => {
     // Normalise to Buffer
@@ -68,8 +70,11 @@ function handleConnection(
 
     if (isBinary) {
       // ── Binary frame → Yjs update delta ──────────────────────────────────
+      // Re-read the role on every message so role changes between sessions
+      // (or future role mutations) are picked up without reconnecting.
+      const liveRole = getClientRole(roomId, clientId) ?? role;
       const update = new Uint8Array(data);
-      applyAndBroadcast(roomId, clientId, user.id, update);
+      applyAndBroadcast(roomId, clientId, ws, user.id, liveRole, update);
       return;
     }
 
@@ -145,6 +150,7 @@ export function createUpgradeHandler(wss: WebSocketServer) {
     const [rawPath, rawQuery] = url.split('?') as [string, string | undefined];
     const match = WS_PATH_RE.exec(rawPath ?? '');
     if (!match) {
+      console.warn('[ws] upgrade rejected: path not /ws/<uuid>', rawPath);
       socket.write('HTTP/1.1 404 Not Found\r\n\r\n');
       socket.destroy();
       return;
@@ -157,6 +163,7 @@ export function createUpgradeHandler(wss: WebSocketServer) {
     const token = qs.get('token');
 
     if (!token) {
+      console.warn('[ws] upgrade rejected: missing ?token=');
       socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
       socket.destroy();
       return;
@@ -174,6 +181,7 @@ export function createUpgradeHandler(wss: WebSocketServer) {
     }
 
     if (!user) {
+      console.warn('[ws] upgrade rejected: invalid or expired session token');
       socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
       socket.destroy();
       return;
@@ -191,6 +199,7 @@ export function createUpgradeHandler(wss: WebSocketServer) {
     }
 
     if (!role) {
+      console.warn(`[ws] upgrade rejected: user ${user.id} not a member of room ${roomId}`);
       socket.write('HTTP/1.1 403 Forbidden\r\n\r\n');
       socket.destroy();
       return;
@@ -207,17 +216,18 @@ export function createUpgradeHandler(wss: WebSocketServer) {
     }
 
     // ── All checks passed: complete the WebSocket upgrade ─────────────────
+    const clientRole = role as Role;
     wss.handleUpgrade(request, socket, head, (ws) => {
       const clientId = randomUUID();
 
       // Register the client BEFORE sending state so broadcastToRoom works
-      joinRoom(roomId, clientId, ws, user!);
+      joinRoom(roomId, clientId, ws, user!, clientRole);
 
       // Send full state (two frames: JSON control + binary state blob)
       void sendFullState(ws, roomId);
 
       // Start the per-connection message loop
-      handleConnection(ws, roomId, clientId, user!);
+      handleConnection(ws, roomId, clientId, user!, clientRole);
 
       wss.emit('connection', ws, request);
     });

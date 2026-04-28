@@ -8,8 +8,36 @@ import { useWsStore } from '../store/ws';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-const WS_BASE_URL =
-  process.env.NEXT_PUBLIC_WS_URL ?? 'ws://localhost:3001';
+/**
+ * Resolve the WS origin for this tab.
+ *
+ * If `NEXT_PUBLIC_WS_URL` is unset, we use the **browser hostname** (not hard-coded
+ * `localhost`) plus the API port from `NEXT_PUBLIC_API_URL`. That way opening the
+ * app as `http://127.0.0.1:3000` or `http://192.168.x.x:3000` still connects to the
+ * backend on the same machine (`:3001`), instead of a wrong host or failed upgrade (1006).
+ */
+function getWsBaseUrl(): string {
+  const explicit = process.env.NEXT_PUBLIC_WS_URL?.trim();
+  if (explicit) return explicit.replace(/\/$/, '');
+
+  const api = process.env.NEXT_PUBLIC_API_URL?.trim() || 'http://localhost:3001';
+  let port = '3001';
+  let wss = false;
+  try {
+    const u = new URL(api);
+    wss = u.protocol === 'https:';
+    port = u.port || (wss ? '443' : '80');
+  } catch {
+    /* keep defaults */
+  }
+
+  if (typeof window !== 'undefined') {
+    const proto = wss ? 'wss:' : 'ws:';
+    return `${proto}//${window.location.hostname}:${port}`;
+  }
+
+  return `${wss ? 'wss' : 'ws'}://localhost:${port}`;
+}
 
 /** Exponential backoff delays in ms. Caps at the last value. */
 const BACKOFF_DELAYS = [1_000, 2_000, 4_000, 8_000, 16_000, 30_000];
@@ -52,11 +80,15 @@ class WsProvider {
       }
     });
 
-    // Outgoing awareness updates
+    // Outgoing awareness updates — only forward LOCAL changes. If we forwarded
+    // remote updates back to the server, every awareness message would echo
+    // around the room indefinitely.
     awareness.on(
       'update',
-      (changes: { added: number[]; updated: number[]; removed: number[] }, _origin: unknown) => {
+      (changes: { added: number[]; updated: number[]; removed: number[] }, origin: unknown) => {
+        if (origin === 'remote') return;
         const changedClients = [...changes.added, ...changes.updated, ...changes.removed];
+        if (changedClients.length === 0) return;
         const encoded = awarenessProtocol.encodeAwarenessUpdate(awareness, changedClients);
         if (this.ws && this.ws.readyState === WebSocket.OPEN) {
           this.ws.send(JSON.stringify({
@@ -96,14 +128,31 @@ class WsProvider {
     this.roomId = roomId;
     this.token = token;
     this.destroyed = false;
+    this.clearRetryTimer();
+    this.detachSocket();
     this.openSocket();
   }
 
   destroy(): void {
     this.destroyed = true;
     this.clearRetryTimer();
-    this.ws?.close(1000, 'provider destroyed');
+    this.detachSocket();
+  }
+
+  /** Drop the current socket without marking the provider destroyed (used before reconnect). */
+  private detachSocket(): void {
+    const old = this.ws;
     this.ws = null;
+    if (!old) return;
+    old.onopen = null;
+    old.onclose = null;
+    old.onerror = null;
+    old.onmessage = null;
+    try {
+      old.close(1000, this.destroyed ? 'provider destroyed' : 'reconnect');
+    } catch {
+      /* already closed */
+    }
   }
 
   // ── Socket lifecycle ────────────────────────────────────────────────────────
@@ -111,7 +160,11 @@ class WsProvider {
   private openSocket(): void {
     if (this.destroyed) return;
 
-    const url = `${WS_BASE_URL}/ws/${this.roomId}?token=${this.token}`;
+    this.detachSocket();
+
+    const base = getWsBaseUrl();
+    const q = encodeURIComponent(this.token);
+    const url = `${base}/ws/${this.roomId}?token=${q}`;
     useWsStore.getState().setStatus('reconnecting');
 
     let ws: WebSocket;
@@ -136,6 +189,19 @@ class WsProvider {
         this.sendSyncRequest();
       }
       // Otherwise the server will send { type: 'init' } + binary state automatically
+
+      // Re-broadcast the current local awareness so peers can render our cursor
+      // immediately. The 'update' listener only fires on changes — without this,
+      // an identity set before connect would never reach the server.
+      if (awareness.getLocalState()) {
+        const encoded = awarenessProtocol.encodeAwarenessUpdate(awareness, [
+          awareness.clientID,
+        ]);
+        ws.send(JSON.stringify({
+          type: 'awareness',
+          data: Array.from(encoded),
+        }));
+      }
     };
 
     ws.onclose = (event) => {
@@ -146,8 +212,18 @@ class WsProvider {
       }
     };
 
-    ws.onerror = (event) => {
-      console.error('[ws-provider] Error:', event);
+    ws.onerror = () => {
+      let host = '(unknown)';
+      try {
+        host = new URL(url).host;
+      } catch {
+        /* ignore */
+      }
+      console.error(
+        '[ws-provider] WebSocket error — code 1006 usually means the HTTP upgrade failed ' +
+          '(wrong host/port, invalid session, or server unreachable). Target:',
+        host,
+      );
       // onclose will fire immediately after; retry is handled there
     };
 
@@ -199,7 +275,15 @@ class WsProvider {
 
       case 'rejected': {
         console.warn('[ws-provider] Update rejected by server:', msg.reason, msg.nodeId);
-        // TODO (Feature 9 RBAC): revert local optimistic update for msg.nodeId
+        // Surface the rejection to the UI layer so it can render a toast and
+        // (eventually) revert the local optimistic update for msg.nodeId.
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(
+            new CustomEvent('ligma:rejected', {
+              detail: { reason: msg.reason, nodeId: msg.nodeId },
+            }),
+          );
+        }
         break;
       }
 
