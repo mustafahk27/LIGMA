@@ -1,19 +1,7 @@
-import nodemailer from 'nodemailer';
-
-const transportConfig = {
-  host: 'smtp.gmail.com',
-  port: 587,
-  secure: false,
-  family: 4,
-  auth: {
-    user: process.env['GMAIL_USER'],
-    pass: process.env['GMAIL_APP_PASSWORD'],
-  },
-};
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const transporter = nodemailer.createTransport(transportConfig as any);
-
+const EMAILJS_SERVICE_ID = process.env['EMAILJS_SERVICE_ID'] ?? '';
+const EMAILJS_TEMPLATE_ID = process.env['EMAILJS_TEMPLATE_ID'] ?? '';
+const EMAILJS_PUBLIC_KEY = process.env['EMAILJS_PUBLIC_KEY'] ?? '';
+const EMAILJS_PRIVATE_KEY = process.env['EMAILJS_PRIVATE_KEY'] ?? '';
 const FRONTEND_URL = process.env['FRONTEND_URL'] ?? 'http://localhost:3000';
 
 export async function sendInviteEmail({
@@ -31,31 +19,26 @@ export async function sendInviteEmail({
 }): Promise<void> {
   const inviteLink = `${FRONTEND_URL}/invite/${token}`;
 
-  await transporter.sendMail({
-    from: `"LIGMA" <${process.env['GMAIL_USER']}>`,
-    to: toEmail,
-    subject: `${inviterName} invited you to "${roomName}" on LIGMA`,
-    html: `
-      <div style="font-family: sans-serif; max-width: 480px; margin: 0 auto; padding: 32px 24px; background: #0f0f0f; color: #e5e5e5; border-radius: 12px;">
-        <h2 style="margin: 0 0 8px; font-size: 20px; color: #fff;">You're invited to collaborate</h2>
-        <p style="margin: 0 0 24px; color: #a1a1aa; font-size: 14px;">
-          <strong style="color: #e5e5e5;">${inviterName}</strong> invited you to join
-          <strong style="color: #e5e5e5;">${roomName}</strong> as a <strong style="color: #e5e5e5;">${role}</strong>.
-        </p>
-
-        <a href="${inviteLink}"
-           style="display: inline-block; padding: 12px 24px; background: #6366f1; color: #fff;
-                  text-decoration: none; border-radius: 8px; font-size: 14px; font-weight: 600;">
-          Accept Invitation
-        </a>
-
-        <p style="margin: 24px 0 0; font-size: 12px; color: #52525b;">
-          This invite expires in 48 hours. If you weren't expecting this, you can ignore this email.
-        </p>
-        <p style="margin: 8px 0 0; font-size: 12px; color: #52525b;">
-          Or copy this link: <a href="${inviteLink}" style="color: #6366f1;">${inviteLink}</a>
-        </p>
-      </div>
-    `,
+  const res = await fetch('https://api.emailjs.com/api/v1.0/email/send', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      service_id: EMAILJS_SERVICE_ID,
+      template_id: EMAILJS_TEMPLATE_ID,
+      user_id: EMAILJS_PUBLIC_KEY,
+      accessToken: EMAILJS_PRIVATE_KEY,
+      template_params: {
+        to_email: toEmail,
+        inviter_name: inviterName,
+        room_name: roomName,
+        role,
+        invite_link: inviteLink,
+      },
+    }),
   });
+
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`EmailJS error ${res.status}: ${text}`);
+  }
 }
