@@ -108,5 +108,5 @@ export const invites = {
   info: (inviteToken: string) =>
     apiFetch<InviteInfo>(`/invites/${inviteToken}`),
   accept: (inviteToken: string, token: string) =>
-    apiFetch<void>(`/invites/${inviteToken}/accept`, { method: 'POST', token }),
+    apiFetch<void>(`/invites/${inviteToken}/accept`, { method: 'POST', token, body: JSON.stringify({}) }),
 };
