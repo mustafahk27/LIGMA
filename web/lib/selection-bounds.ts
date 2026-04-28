@@ -16,10 +16,8 @@ export function nodeLocalContentBounds(node: NodeSnapshot): {
   switch (node.type) {
     case 'pen':
       return penBounds(node.points);
-    case 'circle': {
-      const s = Math.max(node.width, node.height);
-      return { x: 0, y: 0, width: s, height: s };
-    }
+    case 'circle':
+      return { x: 0, y: 0, width: node.width, height: node.height };
     default:
       return { x: 0, y: 0, width: node.width, height: node.height };
   }

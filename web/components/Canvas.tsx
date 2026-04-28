@@ -6,7 +6,7 @@ import {
   useRef,
   useState,
 } from 'react';
-import { Stage, Layer } from 'react-konva';
+import { Stage, Layer, Transformer } from 'react-konva';
 import type Konva from 'konva';
 import { Cursors } from './Cursors';
 import { EditableText } from './EditableText';
@@ -34,6 +34,66 @@ const MIN_SCALE = 0.2;
 const MAX_SCALE = 4;
 const CURSOR_THROTTLE_MS = 30;
 
+/** Minimum node size after transform (canvas units). */
+const MIN_RESIZE_W = 8;
+const MIN_RESIZE_H = 8;
+const MIN_TEXT_RESIZE_W = 40;
+const MIN_TEXT_RESIZE_H = 24;
+const MIN_STICKY_RESIZE_W = 72;
+const MIN_STICKY_RESIZE_H = 52;
+
+/** Text nodes: width-only resize (height follows content via EditableText / TextBody). */
+const TRANSFORM_ANCHORS_HORIZONTAL: string[] = ['middle-left', 'middle-right'];
+
+const TRANSFORM_ANCHORS_ALL: string[] = [
+  'top-left',
+  'top-center',
+  'top-right',
+  'middle-right',
+  'bottom-right',
+  'bottom-center',
+  'bottom-left',
+  'middle-left',
+];
+
+function commitGroupResize(group: Konva.Group, snapshot: NodeSnapshot): void {
+  const scaleX = group.scaleX();
+  const scaleY = group.scaleY();
+  const baseW = group.width() || snapshot.width;
+  const baseH = group.height() || snapshot.height;
+
+  let newW = Math.max(MIN_RESIZE_W, baseW * scaleX);
+  let newH = Math.max(MIN_RESIZE_H, baseH * scaleY);
+
+  if (snapshot.type === 'sticky') {
+    newW = Math.max(MIN_STICKY_RESIZE_W, newW);
+    newH = Math.max(MIN_STICKY_RESIZE_H, newH);
+  } else if (snapshot.type === 'text') {
+    newW = Math.max(MIN_TEXT_RESIZE_W, newW);
+    newH = Math.max(MIN_TEXT_RESIZE_H, newH);
+  }
+
+  group.scaleX(1);
+  group.scaleY(1);
+
+  if (snapshot.type === 'text') {
+    updateNode(snapshot.id, {
+      x: group.x(),
+      y: group.y(),
+      width: Math.round(newW * 100) / 100,
+      height: snapshot.height,
+    });
+    return;
+  }
+
+  updateNode(snapshot.id, {
+    x: group.x(),
+    y: group.y(),
+    width: Math.round(newW * 100) / 100,
+    height: Math.round(newH * 100) / 100,
+  });
+}
+
 export default function Canvas({ userId, role }: CanvasProps) {
   const stageRef = useRef<Konva.Stage | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -53,6 +113,16 @@ export default function Canvas({ userId, role }: CanvasProps) {
 
   const nodes = useYjsNodes();
 
+  const transformerRef = useRef<Konva.Transformer>(null);
+  const groupRefs = useRef<Map<string, Konva.Group>>(new Map());
+  const [isTransforming, setIsTransforming] = useState(false);
+
+  const setGroupRef = useCallback((id: string, nodeEl: Konva.Group | null) => {
+    const m = groupRefs.current;
+    if (nodeEl) m.set(id, nodeEl);
+    else m.delete(id);
+  }, []);
+
   // Drag-creation state for rect/circle and freehand pen
   const dragState = useRef<{
     nodeId: string | null;
@@ -60,7 +130,61 @@ export default function Canvas({ userId, role }: CanvasProps) {
     type: Tool;
   } | null>(null);
 
-  /* ── Resize observer ────────────────────────────────────────────────── */
+  /** Used for transformer anchor set + forceUpdate (must not reference `selectedNode` before it exists). */
+  const selectedNodeKind = selectedNodeId
+    ? nodes.find((n) => n.id === selectedNodeId)?.type
+    : undefined;
+
+  /* Keep handles in sync when switching text ↔ other shapes (anchor set changes). */
+  useEffect(() => {
+    transformerRef.current?.forceUpdate?.();
+  }, [selectedNodeKind]);
+
+  /* ── Konva Transformer — snap-to-node sizes (skips pen, locked/viewer) ── */
+  useEffect(() => {
+    const tr = transformerRef.current;
+    if (!tr || isTransforming) return;
+
+    const clear = () => {
+      tr.nodes([]);
+      tr.getLayer()?.batchDraw();
+    };
+
+    if (tool !== 'select' || editingNodeId || !selectedNodeId) {
+      clear();
+      return;
+    }
+
+    const sel = nodes.find((n) => n.id === selectedNodeId);
+    if (!sel || sel.type === 'pen' || !canActOnNode(role, sel.acl)) {
+      clear();
+      return;
+    }
+
+    const g = groupRefs.current.get(selectedNodeId);
+    if (g) {
+      tr.nodes([g]);
+      tr.getLayer()?.batchDraw();
+    } else {
+      clear();
+    }
+  }, [nodes, selectedNodeId, tool, editingNodeId, role, isTransforming]);
+
+  function handleResizeStart() {
+    setIsTransforming(true);
+  }
+
+  function handleResizeEnd() {
+    const tr = transformerRef.current;
+    const grp = tr?.nodes()[0] as Konva.Group | undefined;
+    const snapshot = selectedNodeId
+      ? nodes.find((n) => n.id === selectedNodeId)
+      : undefined;
+    if (grp && snapshot) commitGroupResize(grp, snapshot);
+    setIsTransforming(false);
+  }
+
+  /* ── Resize observer — HTML container ───────────────────────────────── */
   useEffect(() => {
     if (!containerRef.current) return;
     const el = containerRef.current;
@@ -255,6 +379,17 @@ export default function Canvas({ userId, role }: CanvasProps) {
   const editingNode = nodes.find((n) => n.id === editingNodeId);
   const selectedNode = nodes.find((n) => n.id === selectedNodeId);
 
+  const transformAnchors =
+    selectedNode?.type === 'text' ? TRANSFORM_ANCHORS_HORIZONTAL : TRANSFORM_ANCHORS_ALL;
+
+  const showResizeChrome = Boolean(
+    selectedNode &&
+      tool === 'select' &&
+      !editingNodeId &&
+      selectedNode.type !== 'pen' &&
+      canActOnNode(role, selectedNode.acl),
+  );
+
   // Stage is only draggable when in select mode — drawing tools want the drag
   const stageDraggable = tool === 'select' && !editingNodeId;
 
@@ -289,6 +424,9 @@ export default function Canvas({ userId, role }: CanvasProps) {
               node={node}
               isSelected={node.id === selectedNodeId}
               isEditing={node.id === editingNodeId}
+              showResizeChrome={showResizeChrome && node.id === selectedNodeId}
+              isTransforming={isTransforming}
+              setGroupRef={setGroupRef}
               role={role}
               onSelect={(id) => setSelected(id)}
               onDoubleClick={(id) => setEditing(id)}
@@ -296,6 +434,27 @@ export default function Canvas({ userId, role }: CanvasProps) {
               onDragEnd={(id, x, y) => updateNode(id, { x, y })}
             />
           ))}
+          <Transformer
+            ref={transformerRef}
+            rotateEnabled={false}
+            flipEnabled={false}
+            enabledAnchors={transformAnchors}
+            borderStroke="#4575f3"
+            borderStrokeWidth={1}
+            anchorStroke="#4575f3"
+            anchorCornerRadius={2}
+            anchorSize={11}
+            padding={2}
+            keepRatio={false}
+            boundBoxFunc={(oldBox, newBox) => {
+              const w = Math.max(newBox.width, 1);
+              const h = Math.max(newBox.height, 1);
+              if (w < MIN_RESIZE_W || h < MIN_RESIZE_H) return oldBox;
+              return newBox;
+            }}
+            onTransformStart={handleResizeStart}
+            onTransformEnd={handleResizeEnd}
+          />
         </Layer>
       </Stage>
 

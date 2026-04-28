@@ -32,7 +32,7 @@ export interface CreateNodeInput {
 /** Default geometry for each shape type. */
 const DEFAULTS: Record<NodeKind, { width: number; height: number; fill: string; stroke: string }> = {
   sticky:  { width: 180, height: 140, fill: '#fde68a', stroke: '#0000' },
-  text:    { width: 220, height: 40,  fill: '#0000',   stroke: '#0000' },
+  text:    { width: 260, height: 56,  fill: '#0000',   stroke: '#0000' },
   rect:    { width: 160, height: 100, fill: '#1c2740', stroke: '#4575f3' },
   circle:  { width: 120, height: 120, fill: '#1c2740', stroke: '#8b5cf6' },
   pen:     { width: 0,   height: 0,   fill: '#0000',   stroke: '#dce6f5' },

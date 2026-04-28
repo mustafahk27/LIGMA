@@ -1,10 +1,16 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import * as Y from 'yjs';
-import { getNodeText } from '@/lib/nodes';
+import { getNodeText, updateNode } from '@/lib/nodes';
 import type { NodeSnapshot } from '@/lib/node-types';
 import { dimHex } from '@/lib/text-style';
+
+/** Match Canvas transformer minimums */
+const MIN_TEXT_BOX_H = 24;
+const MIN_STICKY_BOX_H = 52;
+/** Top + bottom inner padding for sticky (matches ShapeRenderer). */
+const STICKY_TEXT_PAD_Y = 24;
 
 interface EditableTextProps {
   node: NodeSnapshot;
@@ -14,27 +20,51 @@ interface EditableTextProps {
 }
 
 /**
- * HTML overlay textarea bound to a node's `Y.Text`. Two-way binding pattern:
- *
- *   Yjs → DOM:  the textarea value is reset to the Y.Text's current string
- *               whenever the underlying CRDT changes (from any source).
- *
- *   DOM → Yjs:  on every input event, we diff the previous value against the
- *               new value and translate that into a Y.Text insert/delete pair.
- *               Doing it as a single insert+delete (instead of replacing the
- *               whole string) preserves remote concurrent edits — typing in
- *               two tabs at the same time merges character-by-character.
- *
- * The overlay is positioned in screen coordinates by re-projecting through the
- * stage transform.
+ * HTML textarea over a text / sticky node. Height follows `scrollHeight` (no scrollbar);
+ * `node.height` updates in canvas space so Konva bounds / selection / resize stay aligned.
  */
 export function EditableText({ node, stagePos, stageScale, onClose }: EditableTextProps) {
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const [value, setValue] = useState(node.content);
-  // We keep the last DOM value so we can compute a minimal diff against it
   const lastValueRef = useRef(node.content);
 
-  /* ── Subscribe to remote Y.Text changes ─────────────────────────────── */
+  const isSticky = node.type === 'sticky';
+  const isText = node.type === 'text';
+  const lineHeight = isSticky ? 1.4 : 1.3;
+
+  /** Content width in **screen** px — must match wrapped layout & Konva Text `width`. */
+  const contentWidthPx = Math.max(
+    8,
+    (node.width - (isSticky ? 24 : 0)) * stageScale,
+  );
+
+  function syncCanvasHeightToTextarea(el: HTMLTextAreaElement): void {
+    el.style.overflow = 'hidden';
+    el.style.overflowY = 'hidden';
+    el.style.boxSizing = 'border-box';
+    el.style.width = `${contentWidthPx}px`;
+
+    el.style.height = '0px';
+    const minPx = Math.ceil(node.fontSize * lineHeight * stageScale);
+    const sh = Math.max(el.scrollHeight, minPx);
+    el.style.height = `${sh}px`;
+
+    const contentCanvasH = sh / stageScale;
+
+    let nextH: number;
+    if (isSticky) {
+      nextH = Math.ceil(contentCanvasH + STICKY_TEXT_PAD_Y);
+      nextH = Math.max(MIN_STICKY_BOX_H, nextH);
+    } else {
+      nextH = Math.ceil(contentCanvasH);
+      nextH = Math.max(MIN_TEXT_BOX_H, nextH);
+    }
+
+    if (Math.abs(nextH - node.height) > 0.25) {
+      updateNode(node.id, { height: nextH });
+    }
+  }
+
   useEffect(() => {
     const ytext = getNodeText(node.id);
     if (!ytext) return;
@@ -48,21 +78,35 @@ export function EditableText({ node, stagePos, stageScale, onClose }: EditableTe
     pull();
     ytext.observe(pull);
     return () => ytext.unobserve(pull);
-    // node.id is stable for the lifetime of this overlay
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [node.id]);
 
-  /* ── Auto-focus on mount ────────────────────────────────────────────── */
+  useLayoutEffect(() => {
+    const el = textareaRef.current;
+    if (!el) return;
+    syncCanvasHeightToTextarea(el);
+  }, [
+    value,
+    contentWidthPx,
+    node.height,
+    node.fontSize,
+    node.fontBold,
+    node.fontItalic,
+    node.textUnderline,
+    isSticky,
+    node.id,
+    stageScale,
+    lineHeight,
+  ]);
+
   useEffect(() => {
     const el = textareaRef.current;
     if (!el) return;
     el.focus();
-    // place cursor at end
     const len = el.value.length;
     el.setSelectionRange(len, len);
   }, []);
 
-  /* ── DOM → Yjs binding ──────────────────────────────────────────────── */
   function onInput(e: React.ChangeEvent<HTMLTextAreaElement>) {
     const next = e.target.value;
     const prev = lastValueRef.current;
@@ -75,15 +119,14 @@ export function EditableText({ node, stagePos, stageScale, onClose }: EditableTe
 
     applyDiffToYText(ytext, prev, next);
     lastValueRef.current = next;
+
+    queueMicrotask(() => syncCanvasHeightToTextarea(e.target));
   }
 
-  /* ── Position overlay over the node ─────────────────────────────────── */
+  if (!isSticky && !isText) return null;
+
   const screenX = node.x * stageScale + stagePos.x;
   const screenY = node.y * stageScale + stagePos.y;
-
-  const isSticky = node.type === 'sticky';
-  const isText = node.type === 'text';
-  if (!isSticky && !isText) return null;
 
   const fs = node.fontSize * stageScale;
   const fontWeight = node.fontBold ? 700 : 400;
@@ -91,29 +134,36 @@ export function EditableText({ node, stagePos, stageScale, onClose }: EditableTe
 
   return (
     <div
-      className="absolute"
+      className="absolute overflow-visible"
       style={{
         left: screenX + (isSticky ? 12 * stageScale : 0),
         top: screenY + (isSticky ? 12 * stageScale : 0),
-        width: (node.width - (isSticky ? 24 : 0)) * stageScale,
-        height: isSticky ? (node.height - 24) * stageScale : 'auto',
-        transformOrigin: 'top left',
+        width: contentWidthPx,
+        minWidth: contentWidthPx,
+        maxWidth: contentWidthPx,
       }}
     >
       <textarea
         ref={textareaRef}
-        className="w-full h-full resize-none outline-none border-none"
+        className="resize-none border-none bg-transparent p-0 outline-none block"
+        spellCheck={false}
+        rows={1}
         style={{
+          width: contentWidthPx,
+          minWidth: contentWidthPx,
+          maxWidth: contentWidthPx,
+          overflow: 'hidden',
+          overflowY: 'hidden',
+          overflowX: 'hidden',
+          wordBreak: 'break-word',
           fontSize: fs,
-          lineHeight: isSticky ? 1.4 : 1.3,
+          lineHeight,
           fontFamily: 'Inter, system-ui, sans-serif',
           fontWeight,
           fontStyle,
           textDecoration: node.textUnderline ? 'underline' : undefined,
           color: value ? node.textColor : dimHex(node.textColor, isSticky ? 0.45 : 0.5),
-          background: 'transparent',
-          padding: 0,
-          minHeight: isText ? Math.max(28, node.fontSize * 1.3) * stageScale : undefined,
+          minHeight: `${node.fontSize * lineHeight * stageScale}px`,
         }}
         value={value}
         onChange={onInput}
@@ -130,19 +180,11 @@ export function EditableText({ node, stagePos, stageScale, onClose }: EditableTe
   );
 }
 
-/**
- * Compute the minimal single-edit diff between `prev` and `next` and apply
- * it to the given Y.Text inside one transaction. Handles inserts, deletes,
- * and replacements — anything more complex still works (it just becomes a
- * single delete-and-insert at the changed range).
- */
 function applyDiffToYText(ytext: Y.Text, prev: string, next: string): void {
-  // Find common prefix
   let start = 0;
   const minLen = Math.min(prev.length, next.length);
   while (start < minLen && prev[start] === next[start]) start++;
 
-  // Find common suffix length
   let endPrev = prev.length;
   let endNext = next.length;
   while (endPrev > start && endNext > start && prev[endPrev - 1] === next[endNext - 1]) {

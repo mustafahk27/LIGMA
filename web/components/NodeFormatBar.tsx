@@ -26,18 +26,20 @@ export function NodeFormatBar({ node, role }: NodeFormatBarProps) {
   if (node.type !== 'sticky' && node.type !== 'text') return null;
   if (!canActOnNode(role, node.acl)) return null;
 
-  const sizeOptions = [...new Set([...FONT_SIZE_OPTIONS, node.fontSize])].sort((a, b) => a - b);
+  const self = node;
+
+  const sizeOptions = [...new Set([...FONT_SIZE_OPTIONS, self.fontSize])].sort((a, b) => a - b);
 
   function patch(p: Partial<Pick<NodeSnapshot, 'fill' | 'fontSize' | 'textColor' | 'fontBold' | 'fontItalic' | 'textUnderline'>>) {
-    updateNode(node.id, p);
-    if ('fill' in p && p.fill && node.type === 'sticky') {
+    updateNode(self.id, p);
+    if ('fill' in p && p.fill && self.type === 'sticky') {
       setStickyDraftFill(p.fill as string);
     }
   }
 
   return (
     <div className="pointer-events-auto flex flex-wrap items-center gap-2 px-3 py-2 rounded-xl border border-[var(--border)] bg-[var(--surface)] shadow-lg max-w-[min(100%,560px)]">
-      {node.type === 'sticky' && (
+      {self.type === 'sticky' && (
         <div className="flex items-center gap-1.5 border-r border-[var(--border)] pr-3 mr-0.5">
           <span className="text-[10px] uppercase tracking-wider text-[var(--text-3)] whitespace-nowrap hidden sm:inline">
             Sticky
@@ -50,7 +52,7 @@ export function NodeFormatBar({ node, role }: NodeFormatBarProps) {
               className="w-6 h-6 rounded-md border-2 transition-transform hover:scale-110 focus:outline-none focus:ring-2 focus:ring-[var(--accent)]"
               style={{
                 background: hex,
-                borderColor: node.fill === hex ? 'var(--accent)' : 'rgba(0,0,0,0.12)',
+                borderColor: self.fill === hex ? 'var(--accent)' : 'rgba(0,0,0,0.12)',
               }}
               onMouseDown={(e) => e.preventDefault()}
               onClick={() => patch({ fill: hex })}
@@ -64,7 +66,7 @@ export function NodeFormatBar({ node, role }: NodeFormatBarProps) {
           Size
           <select
             className="text-xs font-mono bg-[var(--surface-2)] border border-[var(--border)] rounded px-1.5 py-0.5 text-[var(--text)] min-w-[52px]"
-            value={node.fontSize}
+            value={self.fontSize}
             onChange={(e) => patch({ fontSize: Number(e.target.value) })}
           >
             {sizeOptions.map((n) => (
@@ -80,7 +82,7 @@ export function NodeFormatBar({ node, role }: NodeFormatBarProps) {
           <input
             type="color"
             className="w-7 h-7 rounded cursor-pointer border border-[var(--border)] bg-transparent"
-            value={normalizeHex(node.textColor)}
+            value={normalizeHex(self.textColor)}
             onChange={(e) => patch({ textColor: e.target.value })}
             title="Text color"
           />
@@ -89,19 +91,19 @@ export function NodeFormatBar({ node, role }: NodeFormatBarProps) {
         <span className="w-px h-5 bg-[var(--border)] hidden sm:block" />
 
         <ToggleBtn
-          active={node.fontBold}
+          active={self.fontBold}
           label="Bold"
-          onToggle={() => patch({ fontBold: !node.fontBold })}
+          onToggle={() => patch({ fontBold: !self.fontBold })}
         />
         <ToggleBtn
-          active={node.fontItalic}
+          active={self.fontItalic}
           label="Italic"
-          onToggle={() => patch({ fontItalic: !node.fontItalic })}
+          onToggle={() => patch({ fontItalic: !self.fontItalic })}
         />
         <ToggleBtn
-          active={node.textUnderline}
+          active={self.textUnderline}
           label="Underline"
-          onToggle={() => patch({ textUnderline: !node.textUnderline })}
+          onToggle={() => patch({ textUnderline: !self.textUnderline })}
         />
       </div>
     </div>
