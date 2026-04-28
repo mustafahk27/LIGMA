@@ -354,7 +354,7 @@ export default function RoomPage() {
       </header>
 
       {/* ── Canvas + Sidebar ───────────────────────────────────────── */}
-      <div className="flex flex-1 overflow-hidden relative">
+      <div className="relative flex min-h-0 flex-1 overflow-hidden">
         <div className="flex-1 relative overflow-hidden">
           {user && room && !loadingRoom && (
             <Canvas userId={user.id} role={myRole} />
@@ -363,7 +363,7 @@ export default function RoomPage() {
 
         {/* Tabbed sidebar */}
         <div
-          className="flex flex-col border-l border-[var(--border)] bg-[var(--surface)] flex-shrink-0"
+          className="flex min-h-0 flex-shrink-0 flex-col border-l border-[var(--border)] bg-[var(--surface)]"
           style={{ width: '280px' }}
         >
           {/* Tab strip */}
@@ -397,9 +397,9 @@ export default function RoomPage() {
           </div>
 
           {/* Tab content */}
-          <div className="flex-1 overflow-hidden flex flex-col">
+          <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
             {sidebarTab === 'events' && token ? (
-              <EventLog roomId={roomId} token={token} />
+              <EventLog key={roomId} roomId={roomId} token={token} />
             ) : (
               <TaskBoard
                 items={DEMO_TASKS}

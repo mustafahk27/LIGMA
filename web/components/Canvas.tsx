@@ -24,6 +24,8 @@ import {
   layerSendBackward,
   updateNode,
 } from '@/lib/nodes';
+import { nodes as yjsNodesMap } from '@/lib/yjs';
+import * as Y from 'yjs';
 import { useYjsNodes } from '@/lib/use-yjs-nodes';
 import { useUiStore, type Tool } from '@/store/ui';
 import { setLocalCursor } from '@/lib/awareness-identity';
@@ -487,12 +489,18 @@ export default function Canvas({ userId, role }: CanvasProps) {
       const id = d.nodeId;
       const t = d.type;
 
+      // Read points from Yjs — React `nodes` can lag the last pointer sample, so
+      // using snapshots here falsely deleted valid pen strokes as "too short".
+      const yMap = id ? yjsNodesMap.get(id) : undefined;
+      const livePoints =
+        yMap instanceof Y.Map && Array.isArray(yMap.get('points'))
+          ? (yMap.get('points') as number[])
+          : null;
+
       if (id && t === 'pen') {
-        const node = nodes.find((n) => n.id === id);
-        if (node && node.points.length < 4) deleteNode(id);
+        if (livePoints && livePoints.length < 4) deleteNode(id);
       } else if (id && (t === 'line' || t === 'arrow')) {
-        const node = nodes.find((n) => n.id === id);
-        const p = node?.points;
+        const p = livePoints;
         if (p && p.length >= 4) {
           const dx = (p[2] ?? 0) - (p[0] ?? 0);
           const dy = (p[3] ?? 0) - (p[1] ?? 0);
@@ -555,11 +563,10 @@ export default function Canvas({ userId, role }: CanvasProps) {
         }}
       >
         <Layer>
-          {nodes.map((node, stackIndex) => (
+          {nodes.map((node) => (
             <ShapeRenderer
               key={node.id}
               node={node}
-              stackIndex={stackIndex}
               isSelected={node.id === selectedNodeId}
               isEditing={node.id === editingNodeId}
               showResizeChrome={showResizeChrome && node.id === selectedNodeId}
@@ -575,7 +582,6 @@ export default function Canvas({ userId, role }: CanvasProps) {
           ))}
           <Transformer
             ref={transformerRef}
-            zIndex={nodes.length + 1}
             rotateEnabled={false}
             flipEnabled={false}
             enabledAnchors={transformAnchors}

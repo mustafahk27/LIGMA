@@ -63,7 +63,18 @@ export function appendEvent(
   payload: Record<string, unknown>
 ): void {
   writeBuffer.push({ room_id, actor_id, event_type, payload });
-  scheduleFlush();
+  // Sidebar / API only reads semantic rows. Flush those immediately so clients
+  // don't wait on the yjs_update batch delay (~200ms). Pending yjs rows in the
+  // same buffer are included in this flush.
+  if (event_type === 'yjs_update') {
+    scheduleFlush();
+  } else {
+    if (flushTimer !== null) {
+      clearTimeout(flushTimer);
+      flushTimer = null;
+    }
+    void flushBuffer();
+  }
 }
 
 /**

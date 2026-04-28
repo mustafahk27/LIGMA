@@ -11,8 +11,6 @@ import { dimHex, konvaFontStyle } from '@/lib/text-style';
 
 interface ShapeRendererProps {
   node: NodeSnapshot;
-  /** Index in the sorted stack (0 = bottom, larger = on top). Required for Konva draw order. */
-  stackIndex: number;
   isSelected: boolean;
   isEditing: boolean;
   /** When true (select tool, can edit, non-pen), Transformer draws handles — hide duplicate selection chrome. */
@@ -36,7 +34,6 @@ interface ShapeRendererProps {
  */
 export function ShapeRenderer({
   node,
-  stackIndex,
   isSelected,
   isEditing,
   showResizeChrome,
@@ -59,7 +56,6 @@ export function ShapeRenderer({
   return (
     <Group
       ref={(el) => setGroupRef(node.id, el)}
-      zIndex={stackIndex}
       name={node.id}
       x={node.x}
       y={node.y}
