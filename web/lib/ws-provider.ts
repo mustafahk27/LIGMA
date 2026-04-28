@@ -80,11 +80,15 @@ class WsProvider {
       }
     });
 
-    // Outgoing awareness updates
+    // Outgoing awareness updates — only forward LOCAL changes. If we forwarded
+    // remote updates back to the server, every awareness message would echo
+    // around the room indefinitely.
     awareness.on(
       'update',
-      (changes: { added: number[]; updated: number[]; removed: number[] }, _origin: unknown) => {
+      (changes: { added: number[]; updated: number[]; removed: number[] }, origin: unknown) => {
+        if (origin === 'remote') return;
         const changedClients = [...changes.added, ...changes.updated, ...changes.removed];
+        if (changedClients.length === 0) return;
         const encoded = awarenessProtocol.encodeAwarenessUpdate(awareness, changedClients);
         if (this.ws && this.ws.readyState === WebSocket.OPEN) {
           this.ws.send(JSON.stringify({

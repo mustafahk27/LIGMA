@@ -14,6 +14,7 @@ import { TaskBoard } from '@/components/TaskBoard';
 import type { TaskItem } from '@/components/TaskBoard';
 import { useWsProvider } from '@/lib/ws-provider';
 import { setLocalIdentity, clearLocalAwareness } from '@/lib/awareness-identity';
+import { useOnlineMembers } from '@/lib/use-online-members';
 import type { Role } from '@/lib/node-types';
 
 /* Konva needs `window` — defer the entire Canvas to client-only */
@@ -129,6 +130,9 @@ export default function RoomPage() {
   }, [room, user]);
 
   const isLead = myRole === 'lead';
+
+  /* ── Awareness-driven online list (drives the green avatar dot) ─────── */
+  const onlineIds = useOnlineMembers();
 
   useEffect(() => {
     setRole(myRole);
@@ -269,16 +273,31 @@ export default function RoomPage() {
 
         {!loadingRoom && room && (
           <div className="flex -space-x-1.5 mr-2">
-            {(room.members ?? []).slice(0, 5).map((m) => (
-              <div
-                key={m.id}
-                className="w-6 h-6 rounded-full border border-[var(--bg)] flex items-center justify-center text-[9px] font-bold text-white flex-shrink-0"
-                style={{ background: m.color }}
-                title={`${m.name} (${m.role})`}
-              >
-                {m.name[0]?.toUpperCase()}
-              </div>
-            ))}
+            {(room.members ?? []).slice(0, 5).map((m) => {
+              const online = onlineIds.has(m.id);
+              return (
+                <div
+                  key={m.id}
+                  className="relative w-6 h-6 rounded-full border border-[var(--bg)] flex items-center justify-center text-[9px] font-bold text-white flex-shrink-0"
+                  style={{
+                    background: m.color,
+                    opacity: online ? 1 : 0.55,
+                  }}
+                  title={`${m.name} (${m.role})${online ? ' · online' : ''}`}
+                >
+                  {m.name[0]?.toUpperCase()}
+                  {online && (
+                    <span
+                      className="absolute -bottom-0.5 -right-0.5 w-2 h-2 rounded-full"
+                      style={{
+                        background: 'var(--success)',
+                        boxShadow: '0 0 0 1.5px var(--bg)',
+                      }}
+                    />
+                  )}
+                </div>
+              );
+            })}
           </div>
         )}
 

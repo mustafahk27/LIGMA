@@ -139,19 +139,22 @@ export default function Canvas({ userId, role }: CanvasProps) {
   }
 
   /* ── Awareness cursor (throttled) ───────────────────────────────────── */
+  // Tracking happens on the wrapping <div> rather than on the Konva <Stage>
+  // because Konva's pointer event dispatch is suppressed during stage-drag
+  // (panning) and during shape drags. DOM-level mousemove always fires.
   const lastCursorAt = useRef(0);
-  function onMouseMoveStage(e: Konva.KonvaEventObject<MouseEvent>) {
+  function onContainerMouseMove(e: React.MouseEvent<HTMLDivElement>) {
     const now = performance.now();
     if (now - lastCursorAt.current < CURSOR_THROTTLE_MS) return;
     lastCursorAt.current = now;
 
-    const pos = toStageCoords(e.evt.clientX, e.evt.clientY);
+    const pos = toStageCoords(e.clientX, e.clientY);
     setLocalCursor(pos.x, pos.y);
 
     handleCreationDrag(pos);
   }
 
-  function onMouseLeaveStage() {
+  function onContainerMouseLeave() {
     setLocalCursor(null);
   }
 
@@ -227,7 +230,7 @@ export default function Canvas({ userId, role }: CanvasProps) {
     }
   }
 
-  function handleStageMouseUp() {
+  function handleContainerMouseUp() {
     if (dragState.current) {
       // Pen strokes with one or zero points feel like accidental clicks
       const id = dragState.current.nodeId;
@@ -253,7 +256,13 @@ export default function Canvas({ userId, role }: CanvasProps) {
   const stageDraggable = tool === 'select' && !editingNodeId;
 
   return (
-    <div ref={containerRef} className="absolute inset-0 dot-grid overflow-hidden">
+    <div
+      ref={containerRef}
+      className="absolute inset-0 dot-grid overflow-hidden"
+      onMouseMove={onContainerMouseMove}
+      onMouseUp={handleContainerMouseUp}
+      onMouseLeave={onContainerMouseLeave}
+    >
       <Stage
         ref={stageRef}
         width={size.w}
@@ -265,9 +274,6 @@ export default function Canvas({ userId, role }: CanvasProps) {
         draggable={stageDraggable}
         onWheel={onWheel}
         onMouseDown={handleStageMouseDown}
-        onMouseMove={onMouseMoveStage}
-        onMouseUp={handleStageMouseUp}
-        onMouseLeave={onMouseLeaveStage}
         onDragMove={onStageDragMove}
         style={{
           cursor: stageDraggable ? 'grab' : 'crosshair',
