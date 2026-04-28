@@ -1,8 +1,42 @@
 import type { FastifyInstance } from 'fastify';
 import { query } from '../db.js';
 import { requireAuth } from '../middleware/auth.js';
+import { sendInviteEmail } from '../mailer.js';
 
 export async function inviteRoutes(app: FastifyInstance): Promise<void> {
+  // GET /invites/:token — get invite info (public, no auth needed)
+  app.get('/invites/:token', async (request, reply) => {
+    const { token } = request.params as { token: string };
+
+    const result = await query<{
+      room_id: string;
+      room_name: string;
+      role: string;
+      inviter_name: string;
+      accepted_at: Date | null;
+      expires_at: Date;
+    }>(
+      `SELECT i.room_id, r.name as room_name, i.role, u.name as inviter_name,
+              i.accepted_at, i.expires_at
+       FROM invites i
+       JOIN rooms r ON r.id = i.room_id
+       JOIN users u ON u.id = i.invited_by
+       WHERE i.token = $1`,
+      [token]
+    );
+
+    const invite = result.rows[0];
+    if (!invite) return reply.status(404).send({ error: 'Invite not found' });
+    if (invite.accepted_at) return reply.status(409).send({ error: 'Invite already accepted' });
+    if (new Date() > new Date(invite.expires_at)) return reply.status(410).send({ error: 'Invite has expired' });
+
+    return reply.send({
+      room: { id: invite.room_id, name: invite.room_name },
+      role: invite.role,
+      inviter: { name: invite.inviter_name },
+    });
+  });
+
   // POST /rooms/:id/invite — lead invites someone by email
   app.post('/rooms/:id/invite', { preHandler: requireAuth }, async (request, reply) => {
     const { id: room_id } = request.params as { id: string };
@@ -56,6 +90,19 @@ export async function inviteRoutes(app: FastifyInstance): Promise<void> {
 
     const token = inviteResult.rows[0]?.token;
     if (!token) return reply.status(500).send({ error: 'Failed to create invite' });
+
+    // Get room name for the email
+    const roomResult = await query<{ name: string }>(`SELECT name FROM rooms WHERE id = $1`, [room_id]);
+    const roomName = roomResult.rows[0]?.name ?? 'a room';
+
+    // Send invite email (non-blocking — don't fail the request if email fails)
+    sendInviteEmail({
+      toEmail: email,
+      inviterName: user.name,
+      roomName,
+      role,
+      token,
+    }).catch((err) => console.error('[mailer] Failed to send invite email:', err));
 
     return reply.status(201).send({
       invite_link: `/invite/${token}`,
