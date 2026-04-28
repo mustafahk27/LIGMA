@@ -2,6 +2,39 @@ import type { FastifyInstance } from 'fastify';
 import { query } from '../db.js';
 import { requireAuth } from '../middleware/auth.js';
 
+interface Member {
+  id: string;
+  name: string;
+  color: string;
+  role: string;
+}
+
+interface RoomResponse {
+  id: string;
+  name: string;
+  created_at: Date;
+  members: Member[];
+}
+
+async function getRoomWithMembers(roomId: string): Promise<RoomResponse | null> {
+  const roomResult = await query<{ id: string; name: string; created_at: Date }>(
+    `SELECT id, name, created_at FROM rooms WHERE id = $1`,
+    [roomId]
+  );
+  const room = roomResult.rows[0];
+  if (!room) return null;
+
+  const membersResult = await query<Member>(
+    `SELECT u.id, u.name, u.color, m.role
+     FROM memberships m
+     JOIN users u ON u.id = m.user_id
+     WHERE m.room_id = $1`,
+    [roomId]
+  );
+
+  return { ...room, members: membersResult.rows };
+}
+
 export async function roomRoutes(app: FastifyInstance): Promise<void> {
   // POST /rooms — create a room (creator becomes lead)
   app.post('/rooms', { preHandler: requireAuth }, async (request, reply) => {
@@ -25,7 +58,24 @@ export async function roomRoutes(app: FastifyInstance): Promise<void> {
       [room.id, user.id]
     );
 
-    return reply.status(201).send({ room });
+    const full = await getRoomWithMembers(room.id);
+    return reply.status(201).send(full);
+  });
+
+  // GET /rooms — list all rooms the user is a member of
+  app.get('/rooms', { preHandler: requireAuth }, async (request, reply) => {
+    const user = request.user!;
+
+    const roomIds = await query<{ room_id: string }>(
+      `SELECT room_id FROM memberships WHERE user_id = $1`,
+      [user.id]
+    );
+
+    const list = await Promise.all(
+      roomIds.rows.map((r) => getRoomWithMembers(r.room_id))
+    );
+
+    return reply.send(list.filter(Boolean));
   });
 
   // GET /rooms/:id — get room info + members
@@ -33,7 +83,6 @@ export async function roomRoutes(app: FastifyInstance): Promise<void> {
     const { id } = request.params as { id: string };
     const user = request.user!;
 
-    // Check user is a member
     const memberCheck = await query(
       `SELECT role FROM memberships WHERE room_id = $1 AND user_id = $2`,
       [id, user.id]
@@ -43,27 +92,9 @@ export async function roomRoutes(app: FastifyInstance): Promise<void> {
       return reply.status(403).send({ error: 'You are not a member of this room' });
     }
 
-    const roomResult = await query<{ id: string; name: string; created_at: Date }>(
-      `SELECT id, name, created_at FROM rooms WHERE id = $1`,
-      [id]
-    );
-
-    const room = roomResult.rows[0];
+    const room = await getRoomWithMembers(id);
     if (!room) return reply.status(404).send({ error: 'Room not found' });
 
-    const membersResult = await query<{
-      user_id: string;
-      name: string;
-      color: string;
-      role: string;
-    }>(
-      `SELECT u.id as user_id, u.name, u.color, m.role
-       FROM memberships m
-       JOIN users u ON u.id = m.user_id
-       WHERE m.room_id = $1`,
-      [id]
-    );
-
-    return reply.send({ room, members: membersResult.rows, your_role: memberCheck.rows[0]?.role });
+    return reply.send(room);
   });
 }

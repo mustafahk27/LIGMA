@@ -1,4 +1,5 @@
 import Fastify from 'fastify';
+import cors from '@fastify/cors';
 import dotenv from 'dotenv';
 import { WebSocketServer } from 'ws';
 import { authRoutes } from './routes/auth.js';
@@ -9,6 +10,11 @@ import { createUpgradeHandler } from './ws.js';
 dotenv.config();
 
 const app = Fastify({ logger: true });
+
+await app.register(cors, {
+  origin: process.env['ALLOWED_ORIGIN'] ?? 'http://localhost:3000',
+  credentials: true,
+});
 
 await app.register(authRoutes);
 await app.register(roomRoutes);
