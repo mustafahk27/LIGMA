@@ -76,6 +76,16 @@ export interface Room {
   members: { id: string; name: string; color: string; role: string }[];
 }
 
+export interface AppEvent {
+  id: string;
+  seq: number;
+  event_type: string;
+  payload: Record<string, unknown>;
+  created_at: string;
+  actor_name: string;
+  actor_color: string;
+}
+
 export const rooms = {
   create: (name: string, token: string) =>
     apiFetch<Room>('/rooms', { method: 'POST', body: JSON.stringify({ name }), token }),
@@ -83,6 +93,11 @@ export const rooms = {
     apiFetch<Room>(`/rooms/${id}`, { token }),
   list: (token: string) =>
     apiFetch<Room[]>('/rooms', { token }),
+  events: (id: string, token: string, afterSeq = 0) =>
+    apiFetch<{ events: AppEvent[]; latest_seq: number }>(
+      `/rooms/${id}/events?after_seq=${afterSeq}&limit=80`,
+      { token }
+    ),
 };
 
 // ── Invites ───────────────────────────────────────────────────────────────────

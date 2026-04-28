@@ -1,9 +1,11 @@
 import * as Y from 'yjs';
 import { getRoomOrCreate, broadcastToRoom } from './rooms.js';
-import { getEventsSince, persistYjsUpdate } from './event-log.js';
+import { getEventsSince, persistYjsUpdate, appendEvent } from './event-log.js';
 import { validateUpdate, type Role, type ValidationResult } from './rbac.js';
 import { WebSocket } from 'ws';
 
+// Throttles node_updated events (2s cooldown per node ID)
+const lastUpdateMap = new Map<string, number>();
 
 // ─── Y.Doc Bootstrap (cold-start replay from Postgres) ───────────────────────
 
@@ -79,19 +81,86 @@ export function applyAndBroadcast(
     return;
   }
 
-  // 2. Apply to server doc (synchronous — single-threaded Node)
+  // 2. Snapshot node keys BEFORE applying
+  const nodesMap = room.doc.getMap<Y.Map<unknown>>('nodes');
+  const beforeKeys = new Set<string>(nodesMap.keys());
+  
+  // Pre-snapshot node types so we know what was deleted
+  const beforeTypes = new Map<string, string>();
+  for (const key of beforeKeys) {
+    const map = nodesMap.get(key);
+    if (map instanceof Y.Map) {
+      beforeTypes.set(key, String(map.get('type') ?? 'node'));
+    }
+  }
+
+  // Track exact node mutations during the transaction
+  const changedKeys = new Set<string>();
+  const observer = (events: Y.YEvent<any>[]) => {
+    events.forEach(event => {
+      if (event.path.length > 0) {
+        changedKeys.add(String(event.path[0])); // nested property changed
+      } else {
+        event.keys.forEach((_, key) => changedKeys.add(key)); // top-level key added/deleted
+      }
+    });
+  };
+  nodesMap.observeDeep(observer);
+
+  // 3. Apply to server doc (synchronous)
   try {
     Y.applyUpdate(room.doc, update);
   } catch (err) {
+    nodesMap.unobserveDeep(observer);
     console.error(`[ydoc-store] applyUpdate failed for room ${roomId}:`, err);
-    return; // don't persist or broadcast a corrupt update
+    return;
   }
+  nodesMap.unobserveDeep(observer);
 
-  // 3. Persist (fire-and-forget via the 200ms write buffer)
+  // 4. Persist raw Yjs update
   persistYjsUpdate(roomId, actorId, update);
 
-  // 4. Broadcast binary delta to everyone else in the room
+  // 5. Log semantic events
+  const afterKeys = new Set<string>(nodesMap.keys());
+
+  function nodeLabel(nodeMap: Y.Map<unknown> | undefined): string {
+    if (!nodeMap) return '';
+    const content = nodeMap.get('content');
+    if (content instanceof Y.Text) {
+      return content.toString().trim().slice(0, 40) || '';
+    }
+    return '';
+  }
+
+  for (const key of changedKeys) {
+    if (!beforeKeys.has(key) && afterKeys.has(key)) {
+      // Created
+      const nodeMap = nodesMap.get(key);
+      const nodeType = nodeMap instanceof Y.Map ? String(nodeMap.get('type') ?? 'node') : 'node';
+      const label = nodeLabel(nodeMap);
+      appendEvent(roomId, actorId, 'node_created', { nodeId: key, nodeType, label });
+    } else if (beforeKeys.has(key) && !afterKeys.has(key)) {
+      // Deleted
+      const nodeType = beforeTypes.get(key) ?? 'node';
+      appendEvent(roomId, actorId, 'node_deleted', { nodeId: key, nodeType, label: '' });
+      lastUpdateMap.delete(key);
+    } else if (beforeKeys.has(key) && afterKeys.has(key)) {
+      // Updated
+      const now = Date.now();
+      const last = lastUpdateMap.get(key) || 0;
+      if (now - last > 2000) {
+        lastUpdateMap.set(key, now);
+        const nodeMap = nodesMap.get(key);
+        const nodeType = nodeMap instanceof Y.Map ? String(nodeMap.get('type') ?? 'node') : 'node';
+        const label = nodeLabel(nodeMap);
+        appendEvent(roomId, actorId, 'node_updated', { nodeId: key, nodeType, label });
+      }
+    }
+  }
+
+  // 6. Broadcast binary delta to everyone else in the room
   broadcastToRoom(roomId, senderId, update);
+
 }
 
 function safeSendJson(ws: WebSocket, payload: unknown): void {

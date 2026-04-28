@@ -219,9 +219,8 @@ class WsProvider {
       } catch {
         /* ignore */
       }
-      console.error(
-        '[ws-provider] WebSocket error — code 1006 usually means the HTTP upgrade failed ' +
-          '(wrong host/port, invalid session, or server unreachable). Target:',
+      console.debug(
+        '[ws-provider] WebSocket error (code 1006 expected on disconnect). Target:',
         host,
       );
       // onclose will fire immediately after; retry is handled there
