@@ -14,6 +14,7 @@ import { AclEditor } from './AclEditor';
 import { ShapeRenderer } from './ShapeRenderer';
 import { NodeFormatBar } from './NodeFormatBar';
 import { SelectionLayerBar } from './SelectionLayerBar';
+import { TemplateMenu } from './TemplateMenu';
 import {
   appendPenPoints,
   createNode,
@@ -119,6 +120,11 @@ export default function Canvas({ userId, role }: CanvasProps) {
 
   const transformerRef = useRef<Konva.Transformer>(null);
   const groupRefs = useRef<Map<string, Konva.Group>>(new Map());
+  /** Template / frame: shared group_id — drag moves all peers together. */
+  const groupDragRef = useRef<{
+    groupId: string;
+    start: Record<string, { x: number; y: number }>;
+  } | null>(null);
   const [isTransforming, setIsTransforming] = useState(false);
 
   const setGroupRef = useCallback((id: string, nodeEl: Konva.Group | null) => {
@@ -126,6 +132,60 @@ export default function Canvas({ userId, role }: CanvasProps) {
     if (nodeEl) m.set(id, nodeEl);
     else m.delete(id);
   }, []);
+
+  const handleShapeDragStart = useCallback(
+    (id: string) => {
+      setSelected(id);
+      const n = nodes.find((x) => x.id === id);
+      if (!n?.group_id) return;
+      const gid = n.group_id;
+      const peers = nodes.filter((no) => no.group_id === gid);
+      const start: Record<string, { x: number; y: number }> = {};
+      peers.forEach((p) => {
+        start[p.id] = { x: p.x, y: p.y };
+      });
+      groupDragRef.current = { groupId: gid, start };
+    },
+    [nodes, setSelected],
+  );
+
+  const handleShapeDragMove = useCallback((id: string, x: number, y: number) => {
+    const st = groupDragRef.current;
+    if (!st) return;
+    const sel = nodes.find((n) => n.id === id);
+    if (sel?.group_id !== st.groupId || !st.start[id]) return;
+    const origin = st.start[id]!;
+    const dx = x - origin.x;
+    const dy = y - origin.y;
+    for (const nid of Object.keys(st.start)) {
+      if (nid === id) continue;
+      const g = groupRefs.current.get(nid);
+      const s = st.start[nid];
+      if (g && s) g.position({ x: s.x + dx, y: s.y + dy });
+    }
+  }, [nodes]);
+
+  const handleShapeDragEnd = useCallback(
+    (id: string, x: number, y: number) => {
+      const st = groupDragRef.current;
+      const sel = nodes.find((n) => n.id === id);
+      if (st && sel?.group_id === st.groupId && st.start[id]) {
+        const origin = st.start[id]!;
+        const dx = x - origin.x;
+        const dy = y - origin.y;
+        groupDragRef.current = null;
+        for (const nid of Object.keys(st.start)) {
+          const s = st.start[nid]!;
+          updateNode(nid, { x: s.x + dx, y: s.y + dy });
+        }
+        return;
+      }
+      groupDragRef.current = null;
+      if (!sel || !canActOnNode(role, sel.acl)) return;
+      updateNode(id, { x, y });
+    },
+    [nodes, role],
+  );
 
   // Drag-creation state for rect/circle and freehand pen
   const dragState = useRef<{
@@ -162,6 +222,7 @@ export default function Canvas({ userId, role }: CanvasProps) {
     const sel = nodes.find((n) => n.id === selectedNodeId);
     if (
       !sel ||
+      sel.group_id ||
       sel.type === 'pen' ||
       sel.type === 'line' ||
       sel.type === 'arrow' ||
@@ -242,7 +303,11 @@ export default function Canvas({ userId, role }: CanvasProps) {
       if ((e.key === 'Delete' || e.key === 'Backspace') && selectedNodeId) {
         const node = nodes.find((n) => n.id === selectedNodeId);
         if (node && canActOnNode(role, node.acl)) {
-          deleteNode(selectedNodeId);
+          const toRemove =
+            node.group_id && node.group_id.length > 0
+              ? nodes.filter((n) => n.group_id === node.group_id && canActOnNode(role, n.acl))
+              : [node];
+          toRemove.forEach((n) => deleteNode(n.id));
           setSelected(null);
         }
       }
@@ -453,6 +518,7 @@ export default function Canvas({ userId, role }: CanvasProps) {
 
   const showResizeChrome = Boolean(
     selectedNode &&
+      !selectedNode.group_id &&
       tool === 'select' &&
       !editingNodeId &&
       selectedNode.type !== 'pen' &&
@@ -502,8 +568,9 @@ export default function Canvas({ userId, role }: CanvasProps) {
               role={role}
               onSelect={(id) => setSelected(id)}
               onDoubleClick={(id) => setEditing(id)}
-              onDragStart={(id) => setSelected(id)}
-              onDragEnd={(id, x, y) => updateNode(id, { x, y })}
+              onDragStart={handleShapeDragStart}
+              onDragMove={handleShapeDragMove}
+              onDragEnd={handleShapeDragEnd}
             />
           ))}
           <Transformer
@@ -531,9 +598,25 @@ export default function Canvas({ userId, role }: CanvasProps) {
         </Layer>
       </Stage>
 
+      <div className="pointer-events-none absolute left-3 top-3 z-[40]">
+        <TemplateMenu
+          role={role}
+          userId={userId}
+          stageCenterStage={() => ({
+            x: (size.w / 2 - stagePos.x) / stageScale,
+            y: (size.h / 2 - stagePos.y) / stageScale,
+          })}
+          onInserted={(ids) => {
+            const last = ids[ids.length - 1];
+            if (last) setSelected(last);
+            setTool('select');
+          }}
+        />
+      </div>
+
       {/* Layer + text / sticky formatting (bottom) */}
       <div className="pointer-events-none absolute inset-x-0 bottom-3 z-[35] flex flex-col items-center gap-2 px-2">
-        {selectedNode && !editingNodeId && (
+        {selectedNode && !editingNodeId && !selectedNode.group_id && (
           <SelectionLayerBar
             orderedNodes={nodes}
             node={selectedNode}
@@ -574,7 +657,7 @@ export default function Canvas({ userId, role }: CanvasProps) {
 
 function EmptyHint({ tool }: { tool: Tool }) {
   const hints: Record<Tool, string> = {
-    select: 'Drag to pan · Scroll to zoom · Pick a tool to start',
+    select: 'Drag to pan · Scroll to zoom · Templates ↑ · Pick a tool to start',
     sticky: 'Click anywhere to place a sticky note',
     text: 'Click anywhere to add text',
     rect: 'Click and drag to draw a rectangle',

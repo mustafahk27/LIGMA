@@ -24,6 +24,8 @@ interface ShapeRendererProps {
   onSelect: (id: string) => void;
   onDoubleClick: (id: string) => void;
   onDragStart: (id: string) => void;
+  /** Called while dragging (template groups move siblings together via Canvas). */
+  onDragMove?: (id: string, x: number, y: number) => void;
   onDragEnd: (id: string, x: number, y: number) => void;
 }
 
@@ -44,6 +46,7 @@ export function ShapeRenderer({
   onSelect,
   onDoubleClick,
   onDragStart,
+  onDragMove,
   onDragEnd,
 }: ShapeRendererProps) {
   const writable = canActOnNode(role, node.acl);
@@ -63,6 +66,12 @@ export function ShapeRenderer({
       rotation={node.rotation}
       draggable={draggable}
       onDragStart={() => onDragStart(node.id)}
+      onDragMove={
+        onDragMove
+          ? (e: Konva.KonvaEventObject<DragEvent>) =>
+              onDragMove(node.id, e.target.x(), e.target.y())
+          : undefined
+      }
       onDragEnd={handleDragEnd}
       onMouseDown={(e) => {
         e.cancelBubble = true;
