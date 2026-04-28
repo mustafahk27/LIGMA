@@ -1,16 +1,26 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
+import dynamic from 'next/dynamic';
 import { useRouter, useParams } from 'next/navigation';
 import Link from 'next/link';
 import { useAuthStore } from '@/store/auth';
+import { useUiStore, type Tool } from '@/store/ui';
+import { useWsStore } from '@/store/ws';
 import { rooms } from '@/lib/api';
 import type { Room } from '@/lib/api';
 import { ConnectionStatus } from '@/components/ConnectionStatus';
 import { TaskBoard } from '@/components/TaskBoard';
 import type { TaskItem } from '@/components/TaskBoard';
+import { useWsProvider } from '@/lib/ws-provider';
+import { setLocalIdentity, clearLocalAwareness } from '@/lib/awareness-identity';
+import type { Role } from '@/lib/node-types';
 
-type Tool = 'select' | 'sticky' | 'text' | 'rect' | 'circle' | 'pen';
+/* Konva needs `window` — defer the entire Canvas to client-only */
+const Canvas = dynamic(() => import('@/components/Canvas'), {
+  ssr: false,
+  loading: () => <CanvasFallback />,
+});
 
 const TOOLS: { id: Tool; label: string; icon: React.ReactNode }[] = [
   {
@@ -71,7 +81,6 @@ const TOOLS: { id: Tool; label: string; icon: React.ReactNode }[] = [
   },
 ];
 
-// Demo task items — will be replaced by live Yjs data in Feature 11
 const DEMO_TASKS: TaskItem[] = [];
 
 export default function RoomPage() {
@@ -79,15 +88,20 @@ export default function RoomPage() {
   const params = useParams<{ roomId: string }>();
   const { user, token, hydrate, hydrated } = useAuthStore();
 
+  const tool = useUiStore((s) => s.tool);
+  const setTool = useUiStore((s) => s.setTool);
+  const setRole = useUiStore((s) => s.setRole);
+
   const [room, setRoom] = useState<Room | null>(null);
-  const [activeTool, setActiveTool] = useState<Tool>('select');
   const [loadingRoom, setLoadingRoom] = useState(true);
   const [showInviteModal, setShowInviteModal] = useState(false);
   const [inviteEmail, setInviteEmail] = useState('');
   const [inviteRole, setInviteRole] = useState<'contributor' | 'viewer'>('contributor');
   const [inviteStatus, setInviteStatus] = useState<'idle' | 'sending' | 'sent' | 'error'>('idle');
   const [inviteError, setInviteError] = useState('');
+  const [rejection, setRejection] = useState<string | null>(null);
 
+  /* ── Auth bootstrap ─────────────────────────────────────────────────── */
   useEffect(() => {
     hydrate();
   }, [hydrate]);
@@ -102,19 +116,58 @@ export default function RoomPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hydrated, token]);
 
-  // Keyboard shortcuts for tools
+  /* ── Compute role + memoise so identity doesn't churn ───────────────── */
+  const myRole: Role = useMemo(() => {
+    return (room?.members?.find((m) => m.id === user?.id)?.role as Role) ?? 'viewer';
+  }, [room, user]);
+
+  const isLead = myRole === 'lead';
+
+  useEffect(() => {
+    setRole(myRole);
+  }, [myRole, setRole]);
+
+  /* ── Connect Yjs WS provider once room + user are known ─────────────── */
+  useWsProvider(params.roomId, token);
+
+  /* ── Push our identity into Awareness so other tabs label cursors ───── */
+  useEffect(() => {
+    if (!user || !room) return;
+    setLocalIdentity({
+      id: user.id,
+      name: user.name,
+      color: user.color,
+      role: myRole,
+    });
+    return () => {
+      clearLocalAwareness();
+    };
+  }, [user, room, myRole]);
+
+  /* ── Watch for RBAC rejections and surface them as a toast ──────────── */
+  useEffect(() => {
+    function onRejected(e: Event) {
+      const detail = (e as CustomEvent<{ reason: string; nodeId?: string }>).detail;
+      setRejection(detail?.reason ?? 'Update rejected');
+      setTimeout(() => setRejection(null), 3000);
+    }
+    window.addEventListener('ligma:rejected', onRejected as EventListener);
+    return () => window.removeEventListener('ligma:rejected', onRejected as EventListener);
+  }, []);
+
+  /* ── Tool keyboard shortcuts ────────────────────────────────────────── */
   useEffect(() => {
     const map: Record<string, Tool> = {
       v: 'select', s: 'sticky', t: 'text', r: 'rect', c: 'circle', p: 'pen',
     };
     function onKey(e: KeyboardEvent) {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
-      const tool = map[e.key.toLowerCase()];
-      if (tool) setActiveTool(tool);
+      const next = map[e.key.toLowerCase()];
+      if (next) setTool(next);
     }
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, []);
+  }, [setTool]);
 
   async function loadRoom() {
     if (!token || !params.roomId) return;
@@ -122,7 +175,7 @@ export default function RoomPage() {
       const r = await rooms.get(params.roomId, token);
       setRoom(r);
     } catch {
-      // room not found or no access
+      // not a member or room gone
     } finally {
       setLoadingRoom(false);
     }
@@ -144,9 +197,7 @@ export default function RoomPage() {
     }
   }
 
-  const myRole = room?.members?.find((m) => m.id === user?.id)?.role ?? 'viewer';
-  const isLead = myRole === 'lead';
-
+  /* ── Render ─────────────────────────────────────────────────────────── */
   return (
     <div className="flex flex-col h-screen overflow-hidden">
       {/* ── Top bar ─────────────────────────────────────────────────── */}
@@ -154,7 +205,6 @@ export default function RoomPage() {
         className="flex items-center gap-3 px-4 py-2 border-b border-[var(--border)] flex-shrink-0 z-40"
         style={{ background: 'var(--bg)', minHeight: '48px' }}
       >
-        {/* Logo / back */}
         <Link
           href="/dashboard"
           className="text-sm font-bold tracking-widest uppercase font-mono text-[var(--text-2)] hover:text-[var(--text)] transition-colors flex-shrink-0"
@@ -165,7 +215,6 @@ export default function RoomPage() {
 
         <span className="text-[var(--border-2)] text-sm flex-shrink-0">/</span>
 
-        {/* Room name */}
         <span className="text-sm font-medium text-[var(--text)] truncate">
           {loadingRoom ? (
             <span className="inline-block w-24 h-3.5 bg-[var(--surface-2)] rounded animate-pulse" />
@@ -174,7 +223,6 @@ export default function RoomPage() {
           )}
         </span>
 
-        {/* Role badge */}
         {!loadingRoom && room && (
           <span
             className="text-[10px] font-semibold px-1.5 py-0.5 rounded-md uppercase tracking-wider flex-shrink-0"
@@ -188,28 +236,30 @@ export default function RoomPage() {
           </span>
         )}
 
-        {/* Tools */}
-        <div className="flex items-center gap-0.5 mx-2 p-1 rounded-lg bg-[var(--surface)] border border-[var(--border)]">
-          {TOOLS.map((tool) => (
+        {/* Tools — disabled for viewers */}
+        <div
+          className="flex items-center gap-0.5 mx-2 p-1 rounded-lg bg-[var(--surface)] border border-[var(--border)]"
+          style={{ opacity: myRole === 'viewer' ? 0.5 : 1 }}
+        >
+          {TOOLS.map((t) => (
             <button
-              key={tool.id}
-              onClick={() => setActiveTool(tool.id)}
-              title={tool.label}
-              className="w-7 h-7 flex items-center justify-center rounded-md transition-all"
+              key={t.id}
+              onClick={() => setTool(t.id)}
+              title={t.label}
+              disabled={myRole === 'viewer' && t.id !== 'select'}
+              className="w-7 h-7 flex items-center justify-center rounded-md transition-all disabled:cursor-not-allowed"
               style={{
-                background: activeTool === tool.id ? 'var(--accent)' : 'transparent',
-                color: activeTool === tool.id ? '#fff' : 'var(--text-3)',
+                background: tool === t.id ? 'var(--accent)' : 'transparent',
+                color: tool === t.id ? '#fff' : 'var(--text-3)',
               }}
             >
-              {tool.icon}
+              {t.icon}
             </button>
           ))}
         </div>
 
-        {/* Spacer */}
         <div className="flex-1" />
 
-        {/* Member avatars */}
         {!loadingRoom && room && (
           <div className="flex -space-x-1.5 mr-2">
             {(room.members ?? []).slice(0, 5).map((m) => (
@@ -225,7 +275,6 @@ export default function RoomPage() {
           </div>
         )}
 
-        {/* Invite button (lead only) */}
         {isLead && (
           <button
             className="btn btn-ghost text-xs px-2.5 py-1 flex-shrink-0"
@@ -242,14 +291,29 @@ export default function RoomPage() {
       </header>
 
       {/* ── Canvas + TaskBoard ───────────────────────────────────────── */}
-      <div className="flex flex-1 overflow-hidden">
-        {/* Canvas area */}
-        <div className="flex-1 relative overflow-hidden dot-grid">
-          <CanvasPlaceholder tool={activeTool} />
+      <div className="flex flex-1 overflow-hidden relative">
+        <div className="flex-1 relative overflow-hidden">
+          {user && room && !loadingRoom && (
+            <Canvas userId={user.id} role={myRole} />
+          )}
         </div>
 
-        {/* Task Board drawer */}
         <TaskBoard items={DEMO_TASKS} onJump={(id) => console.log('jump to', id)} />
+
+        {/* RBAC rejection toast */}
+        {rejection && (
+          <div
+            className="absolute top-3 left-1/2 -translate-x-1/2 px-3 py-2 rounded-lg text-xs font-medium animate-fade-in"
+            style={{
+              background: 'rgba(242,87,87,0.95)',
+              color: '#fff',
+              boxShadow: '0 4px 16px rgba(0,0,0,0.4)',
+              zIndex: 50,
+            }}
+          >
+            🚫 {rejection}
+          </div>
+        )}
       </div>
 
       {/* ── Invite modal ────────────────────────────────────────────── */}
@@ -354,30 +418,11 @@ export default function RoomPage() {
   );
 }
 
-function CanvasPlaceholder({ tool }: { tool: Tool }) {
-  const hints: Record<Tool, string> = {
-    select:  'Click to select elements',
-    sticky:  'Double-click anywhere to place a sticky note',
-    text:    'Click to place a text block',
-    rect:    'Click and drag to draw a rectangle',
-    circle:  'Click and drag to draw a circle',
-    pen:     'Click and drag to draw freehand',
-  };
-
+function CanvasFallback() {
   return (
-    <div className="absolute inset-0 flex flex-col items-center justify-center select-none pointer-events-none">
-      {/* Crosshair center */}
-      <div className="relative flex items-center justify-center">
-        <div className="absolute w-px h-12 bg-[var(--border)]" />
-        <div className="absolute w-12 h-px bg-[var(--border)]" />
-        <div className="w-2 h-2 rounded-full bg-[var(--border-2)]" />
-      </div>
-
-      <p className="mt-8 text-xs font-mono text-[var(--text-3)] uppercase tracking-widest">
-        {hints[tool]}
-      </p>
-      <p className="mt-2 text-xs text-[var(--text-3)]">
-        Canvas initialises here (Feature 4)
+    <div className="absolute inset-0 flex items-center justify-center dot-grid">
+      <p className="text-xs font-mono text-[var(--text-3)] uppercase tracking-widest">
+        Loading canvas…
       </p>
     </div>
   );

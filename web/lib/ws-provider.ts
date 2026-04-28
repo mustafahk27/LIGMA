@@ -136,6 +136,19 @@ class WsProvider {
         this.sendSyncRequest();
       }
       // Otherwise the server will send { type: 'init' } + binary state automatically
+
+      // Re-broadcast the current local awareness so peers can render our cursor
+      // immediately. The 'update' listener only fires on changes — without this,
+      // an identity set before connect would never reach the server.
+      if (awareness.getLocalState()) {
+        const encoded = awarenessProtocol.encodeAwarenessUpdate(awareness, [
+          awareness.clientID,
+        ]);
+        ws.send(JSON.stringify({
+          type: 'awareness',
+          data: Array.from(encoded),
+        }));
+      }
     };
 
     ws.onclose = (event) => {
@@ -199,7 +212,15 @@ class WsProvider {
 
       case 'rejected': {
         console.warn('[ws-provider] Update rejected by server:', msg.reason, msg.nodeId);
-        // TODO (Feature 9 RBAC): revert local optimistic update for msg.nodeId
+        // Surface the rejection to the UI layer so it can render a toast and
+        // (eventually) revert the local optimistic update for msg.nodeId.
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(
+            new CustomEvent('ligma:rejected', {
+              detail: { reason: msg.reason, nodeId: msg.nodeId },
+            }),
+          );
+        }
         break;
       }
 
