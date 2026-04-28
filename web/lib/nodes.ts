@@ -41,6 +41,38 @@ const DEFAULTS: Record<NodeKind, { width: number; height: number; fill: string; 
   arrow:       { width: 8, height: 8, fill: '#0000', stroke: '#4575f3' },
 };
 
+/** Stacking key in Yjs — higher draws on top. Missing `z_index` uses `created_at` (legacy). */
+export function layerSortKeyFromMap(map: NodeMap): number {
+  const zi = map.get('z_index');
+  if (typeof zi === 'number') return zi;
+  return (map.get('created_at') as number) ?? 0;
+}
+
+function maxLayerSortKey(): number {
+  let max = 0;
+  nodes.forEach((map) => {
+    if (!(map instanceof Y.Map)) return;
+    const k = layerSortKeyFromMap(map);
+    if (k > max) max = k;
+  });
+  return max;
+}
+
+function allocTopLayerKey(): number {
+  return maxLayerSortKey() + 1;
+}
+
+function minLayerSortKeyExcluding(selfId: string): number | null {
+  let min = Infinity;
+  nodes.forEach((map, key) => {
+    if (key === selfId) return;
+    if (!(map instanceof Y.Map)) return;
+    const k = layerSortKeyFromMap(map);
+    if (k < min) min = k;
+  });
+  return min === Infinity ? null : min;
+}
+
 /**
  * Create a node and add it to the shared Yjs map atomically.
  * `content` is stored as a Y.Text so collaborative typing works out of the box.
@@ -71,6 +103,7 @@ export function createNode(input: CreateNodeInput): string {
     node.set('points', input.points ?? []);
     node.set('author_id', input.author_id);
     node.set('created_at', Date.now());
+    node.set('z_index', allocTopLayerKey());
     node.set('acl', { locked: false });
     node.set('intent', null);
 
@@ -172,6 +205,7 @@ export function nodeToSnapshot(map: NodeMap): NodeSnapshot {
     content: content instanceof Y.Text ? content.toString() : (content as string) ?? '',
     author_id: (map.get('author_id') as string) ?? '',
     created_at: (map.get('created_at') as number) ?? 0,
+    z_index: layerSortKeyFromMap(map),
     acl: ((map.get('acl') as NodeAcl) ?? { locked: false }),
     intent: (map.get('intent') as string | null) ?? null,
     fontSize: typeof map.get('fontSize') === 'number' ? (map.get('fontSize') as number) : textBase.fontSize,
@@ -183,6 +217,124 @@ export function nodeToSnapshot(map: NodeMap): NodeSnapshot {
         ? (map.get('textUnderline') as boolean)
         : textBase.textUnderline,
   };
+}
+
+/** All nodes sorted bottom → top (render order). */
+export function getSortedNodeSnapshots(): NodeSnapshot[] {
+  const out: NodeSnapshot[] = [];
+  nodes.forEach((map) => {
+    if (map instanceof Y.Map) out.push(nodeToSnapshot(map));
+  });
+  out.sort((a, b) => {
+    if (a.z_index !== b.z_index) return a.z_index - b.z_index;
+    return a.created_at - b.created_at;
+  });
+  return out;
+}
+
+export function layerBringForward(id: string): void {
+  const sorted = getSortedNodeSnapshots();
+  const idx = sorted.findIndex((n) => n.id === id);
+  if (idx < 0 || idx >= sorted.length - 1) return;
+  const lower = sorted[idx];
+  const higher = sorted[idx + 1];
+  const a = nodes.get(lower.id);
+  const b = nodes.get(higher.id);
+  if (!(a instanceof Y.Map) || !(b instanceof Y.Map)) return;
+  const za = layerSortKeyFromMap(a);
+  const zb = layerSortKeyFromMap(b);
+  ydoc.transact(() => {
+    if (za === zb) {
+      a.set('z_index', zb + 1);
+    } else {
+      a.set('z_index', zb);
+      b.set('z_index', za);
+    }
+  }, 'local');
+}
+
+export function layerSendBackward(id: string): void {
+  const sorted = getSortedNodeSnapshots();
+  const idx = sorted.findIndex((n) => n.id === id);
+  if (idx <= 0) return;
+  const cur = sorted[idx];
+  const prev = sorted[idx - 1];
+  const a = nodes.get(cur.id);
+  const b = nodes.get(prev.id);
+  if (!(a instanceof Y.Map) || !(b instanceof Y.Map)) return;
+  const za = layerSortKeyFromMap(a);
+  const zb = layerSortKeyFromMap(b);
+  ydoc.transact(() => {
+    if (za === zb) {
+      a.set('z_index', zb - 1);
+    } else {
+      a.set('z_index', zb);
+      b.set('z_index', za);
+    }
+  }, 'local');
+}
+
+export function layerBringToFront(id: string): void {
+  const map = nodes.get(id);
+  if (!(map instanceof Y.Map)) return;
+  ydoc.transact(() => {
+    map.set('z_index', allocTopLayerKey());
+  }, 'local');
+}
+
+export function layerSendToBack(id: string): void {
+  const map = nodes.get(id);
+  if (!(map instanceof Y.Map)) return;
+  ydoc.transact(() => {
+    const belowOthers = minLayerSortKeyExcluding(id);
+    map.set('z_index', belowOthers === null ? -1 : belowOthers - 1);
+  }, 'local');
+}
+
+/**
+ * Duplicate a node (offset position, new id; copy goes on top).
+ * Returns the new node id, or null if missing.
+ */
+export function duplicateNode(sourceId: string, authorId: string): string | null {
+  const src = nodes.get(sourceId);
+  if (!(src instanceof Y.Map)) return null;
+
+  const snap = nodeToSnapshot(src);
+  const newId = freshId();
+  const OFFSET = 12;
+
+  ydoc.transact(() => {
+    const node = new Y.Map();
+    node.set('id', newId);
+    node.set('type', snap.type);
+    node.set('x', snap.x + OFFSET);
+    node.set('y', snap.y + OFFSET);
+    node.set('width', snap.width);
+    node.set('height', snap.height);
+    node.set('rotation', snap.rotation);
+    node.set('fill', snap.fill);
+    node.set('stroke', snap.stroke);
+    node.set('cornerRadius', snap.cornerRadius);
+    node.set('points', [...snap.points]);
+    node.set('author_id', authorId);
+    node.set('created_at', Date.now());
+    node.set('z_index', maxLayerSortKey() + 1);
+    node.set('acl', snap.acl);
+    node.set('intent', snap.intent);
+    node.set('fontSize', snap.fontSize);
+    node.set('textColor', snap.textColor);
+    node.set('fontBold', snap.fontBold);
+    node.set('fontItalic', snap.fontItalic);
+    node.set('textUnderline', snap.textUnderline);
+
+    const text = new Y.Text();
+    if (snap.content) text.insert(0, snap.content);
+    node.set('content', text);
+
+    nodes.set(newId, node);
+  }, 'local');
+
+  return newId;
 }
 
 /** Returns the live Y.Text for a node (used by EditableText). */

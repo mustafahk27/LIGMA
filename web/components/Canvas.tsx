@@ -13,10 +13,14 @@ import { EditableText } from './EditableText';
 import { AclEditor } from './AclEditor';
 import { ShapeRenderer } from './ShapeRenderer';
 import { NodeFormatBar } from './NodeFormatBar';
+import { SelectionLayerBar } from './SelectionLayerBar';
 import {
   appendPenPoints,
   createNode,
   deleteNode,
+  duplicateNode,
+  layerBringForward,
+  layerSendBackward,
   updateNode,
 } from '@/lib/nodes';
 import { useYjsNodes } from '@/lib/use-yjs-nodes';
@@ -209,6 +213,32 @@ export default function Canvas({ userId, role }: CanvasProps) {
       if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) {
         return;
       }
+      if (
+        (e.ctrlKey || e.metaKey) &&
+        e.key.toLowerCase() === 'd' &&
+        selectedNodeId
+      ) {
+        e.preventDefault();
+        const node = nodes.find((n) => n.id === selectedNodeId);
+        if (node && canActOnNode(role, node.acl)) {
+          const nid = duplicateNode(selectedNodeId, userId);
+          if (nid) setSelected(nid);
+        }
+        return;
+      }
+      if (
+        (e.ctrlKey || e.metaKey) &&
+        (e.key === ']' || e.key === '[') &&
+        selectedNodeId
+      ) {
+        e.preventDefault();
+        const node = nodes.find((n) => n.id === selectedNodeId);
+        if (node && canActOnNode(role, node.acl)) {
+          if (e.key === ']') layerBringForward(selectedNodeId);
+          else layerSendBackward(selectedNodeId);
+        }
+        return;
+      }
       if ((e.key === 'Delete' || e.key === 'Backspace') && selectedNodeId) {
         const node = nodes.find((n) => n.id === selectedNodeId);
         if (node && canActOnNode(role, node.acl)) {
@@ -223,7 +253,7 @@ export default function Canvas({ userId, role }: CanvasProps) {
     }
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [selectedNodeId, nodes, role, setSelected, setEditing]);
+  }, [selectedNodeId, nodes, role, setSelected, setEditing, userId]);
 
   /* ── Coordinate helpers ─────────────────────────────────────────────── */
   /** Convert a pointer position (in screen coords) to stage (canvas) coords. */
@@ -459,10 +489,11 @@ export default function Canvas({ userId, role }: CanvasProps) {
         }}
       >
         <Layer>
-          {nodes.map((node) => (
+          {nodes.map((node, stackIndex) => (
             <ShapeRenderer
               key={node.id}
               node={node}
+              stackIndex={stackIndex}
               isSelected={node.id === selectedNodeId}
               isEditing={node.id === editingNodeId}
               showResizeChrome={showResizeChrome && node.id === selectedNodeId}
@@ -477,6 +508,7 @@ export default function Canvas({ userId, role }: CanvasProps) {
           ))}
           <Transformer
             ref={transformerRef}
+            zIndex={nodes.length + 1}
             rotateEnabled={false}
             flipEnabled={false}
             enabledAnchors={transformAnchors}
@@ -499,8 +531,16 @@ export default function Canvas({ userId, role }: CanvasProps) {
         </Layer>
       </Stage>
 
-      {/* Text + sticky formatting (bottom) */}
-      <div className="pointer-events-none absolute inset-x-0 bottom-3 z-[35] flex justify-center px-2">
+      {/* Layer + text / sticky formatting (bottom) */}
+      <div className="pointer-events-none absolute inset-x-0 bottom-3 z-[35] flex flex-col items-center gap-2 px-2">
+        {selectedNode && !editingNodeId && (
+          <SelectionLayerBar
+            orderedNodes={nodes}
+            node={selectedNode}
+            role={role}
+            userId={userId}
+          />
+        )}
         <NodeFormatBar node={selectedNode ?? null} role={role} />
       </div>
 

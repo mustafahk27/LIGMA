@@ -38,6 +38,8 @@ export interface NodeSnapshot {
   content: string;
   author_id: string;
   created_at: number;
+  /** Stacking order — higher draws on top. Mirrors `created_at` when unset in Yjs (see `nodeToSnapshot`). */
+  z_index: number;
   acl: NodeAcl;
   intent: string | null;
   /**
