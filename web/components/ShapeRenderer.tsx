@@ -7,6 +7,7 @@ import type { NodeSnapshot, Role } from '@/lib/node-types';
 import { canActOnNode } from '@/lib/node-types';
 import { updateNode } from '@/lib/nodes';
 import { nodeLocalContentBounds } from '@/lib/selection-bounds';
+import { dimHex, konvaFontStyle } from '@/lib/text-style';
 
 interface ShapeRendererProps {
   node: NodeSnapshot;
@@ -103,6 +104,7 @@ function ShapeBody({
 /* ── Per-type bodies ───────────────────────────────────────────────────────── */
 
 function StickyBody({ node, isEditing }: { node: NodeSnapshot; isEditing: boolean }) {
+  const fill = node.content ? node.textColor : dimHex(node.textColor, 0.38);
   return (
     <>
       <Rect
@@ -122,13 +124,14 @@ function StickyBody({ node, isEditing }: { node: NodeSnapshot; isEditing: boolea
           y={12}
           width={node.width - 24}
           height={node.height - 24}
-          fontSize={14}
-          fontStyle={node.content ? 'normal' : 'italic'}
-          fill={node.content ? 'rgba(0,0,0,0.78)' : 'rgba(0,0,0,0.35)'}
+          fontSize={node.fontSize}
+          fontStyle={node.content ? konvaFontStyle(node.fontBold, node.fontItalic) : 'italic'}
+          fill={fill}
           fontFamily="Inter, system-ui, sans-serif"
           lineHeight={1.4}
           wrap="word"
           listening={false}
+          textDecoration={node.textUnderline ? 'underline' : undefined}
         />
       )}
       {node.intent && <IntentBadge intent={node.intent} />}
@@ -160,7 +163,7 @@ function TextBody({
     if (measured > 0 && Math.abs(measured - node.height) >= 1) {
       updateNode(node.id, { height: measured });
     }
-  }, [node.content, node.width, node.height, isEditing, node.id]);
+  }, [node.content, node.width, node.height, node.fontSize, node.fontBold, node.fontItalic, node.textColor, isEditing, node.id]);
 
   const outlineH = Math.max(layoutH, node.height, 24);
 
@@ -170,13 +173,16 @@ function TextBody({
         ref={textRef}
         text={isEditing ? '' : node.content || 'Text'}
         width={node.width}
-        fontSize={20}
-        fontStyle={node.content ? 'normal' : 'italic'}
-        fill={node.content ? '#dce6f5' : '#3d4f6e'}
+        fontSize={node.fontSize}
+        fontStyle={node.content ? konvaFontStyle(node.fontBold, node.fontItalic) : 'italic'}
+        fill={
+          node.content ? node.textColor : dimHex(node.textColor, 0.42)
+        }
         fontFamily="Inter, system-ui, sans-serif"
         lineHeight={1.3}
         wrap="word"
         listening={!isEditing}
+        textDecoration={node.textUnderline ? 'underline' : undefined}
       />
       {isSelected && (
         <Rect

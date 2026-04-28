@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import * as Y from 'yjs';
 import { getNodeText } from '@/lib/nodes';
 import type { NodeSnapshot } from '@/lib/node-types';
+import { dimHex } from '@/lib/text-style';
 
 interface EditableTextProps {
   node: NodeSnapshot;
@@ -84,6 +85,10 @@ export function EditableText({ node, stagePos, stageScale, onClose }: EditableTe
   const isText = node.type === 'text';
   if (!isSticky && !isText) return null;
 
+  const fs = node.fontSize * stageScale;
+  const fontWeight = node.fontBold ? 700 : 400;
+  const fontStyle = node.fontItalic ? 'italic' : 'normal';
+
   return (
     <div
       className="absolute"
@@ -99,13 +104,16 @@ export function EditableText({ node, stagePos, stageScale, onClose }: EditableTe
         ref={textareaRef}
         className="w-full h-full resize-none outline-none border-none"
         style={{
-          fontSize: (isSticky ? 14 : 20) * stageScale,
-          lineHeight: 1.4,
+          fontSize: fs,
+          lineHeight: isSticky ? 1.4 : 1.3,
           fontFamily: 'Inter, system-ui, sans-serif',
-          color: isSticky ? 'rgba(0,0,0,0.78)' : '#dce6f5',
+          fontWeight,
+          fontStyle,
+          textDecoration: node.textUnderline ? 'underline' : undefined,
+          color: value ? node.textColor : dimHex(node.textColor, isSticky ? 0.45 : 0.5),
           background: 'transparent',
           padding: 0,
-          minHeight: isText ? 28 * stageScale : undefined,
+          minHeight: isText ? Math.max(28, node.fontSize * 1.3) * stageScale : undefined,
         }}
         value={value}
         onChange={onInput}

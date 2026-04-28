@@ -30,6 +30,15 @@ export interface NodeSnapshot {
   created_at: number;
   acl: NodeAcl;
   intent: string | null;
+  /**
+   * Rich text (sticky + text). Other node types ignore these; defaults are filled in
+   * `nodeToSnapshot` when keys are missing for backward compatibility.
+   */
+  fontSize: number;
+  textColor: string;
+  fontBold: boolean;
+  fontItalic: boolean;
+  textUnderline: boolean;
 }
 
 export type NodeMap = Y.Map<unknown>;
@@ -41,6 +50,25 @@ export const STICKY_PALETTE = [
   '#86efac',
   '#c4b5fd',
 ] as const;
+
+export const DEFAULT_STICKY_TEXT = {
+  fontSize: 14,
+  textColor: '#1c1917',
+  fontBold: false,
+  fontItalic: false,
+  textUnderline: false,
+} as const;
+
+export const DEFAULT_TEXT_NODE_TEXT = {
+  fontSize: 20,
+  textColor: '#dce6f5',
+  fontBold: false,
+  fontItalic: false,
+  textUnderline: false,
+} as const;
+
+/** Preset steps for the format bar font-size control. */
+export const FONT_SIZE_OPTIONS = [12, 14, 16, 18, 20, 24, 28, 32] as const;
 
 export type Role = 'lead' | 'contributor' | 'viewer';
 

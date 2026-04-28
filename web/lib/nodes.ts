@@ -3,6 +3,7 @@
 import * as Y from 'yjs';
 import { ydoc, nodes } from './yjs';
 import type { NodeKind, NodeSnapshot, NodeMap, NodeAcl } from './node-types';
+import { DEFAULT_STICKY_TEXT, DEFAULT_TEXT_NODE_TEXT } from './node-types';
 
 /** Random short id for new nodes. */
 function freshId(): string {
@@ -20,6 +21,12 @@ export interface CreateNodeInput {
   points?: number[];
   content?: string;
   author_id: string;
+  /** Sticky + text nodes only — rich text styling. */
+  fontSize?: number;
+  textColor?: string;
+  fontBold?: boolean;
+  fontItalic?: boolean;
+  textUnderline?: boolean;
 }
 
 /** Default geometry for each shape type. */
@@ -56,6 +63,22 @@ export function createNode(input: CreateNodeInput): string {
     node.set('acl', { locked: false });
     node.set('intent', null);
 
+    if (input.type === 'sticky') {
+      const s = DEFAULT_STICKY_TEXT;
+      node.set('fontSize', input.fontSize ?? s.fontSize);
+      node.set('textColor', input.textColor ?? s.textColor);
+      node.set('fontBold', input.fontBold ?? s.fontBold);
+      node.set('fontItalic', input.fontItalic ?? s.fontItalic);
+      node.set('textUnderline', input.textUnderline ?? s.textUnderline);
+    } else if (input.type === 'text') {
+      const s = DEFAULT_TEXT_NODE_TEXT;
+      node.set('fontSize', input.fontSize ?? s.fontSize);
+      node.set('textColor', input.textColor ?? s.textColor);
+      node.set('fontBold', input.fontBold ?? s.fontBold);
+      node.set('fontItalic', input.fontItalic ?? s.fontItalic);
+      node.set('textUnderline', input.textUnderline ?? s.textUnderline);
+    }
+
     const text = new Y.Text();
     if (input.content) text.insert(0, input.content);
     node.set('content', text);
@@ -69,7 +92,9 @@ export function createNode(input: CreateNodeInput): string {
 /** Patch one or more fields of a node inside a single Yjs transaction. */
 export function updateNode(
   id: string,
-  patch: Partial<Omit<NodeSnapshot, 'id' | 'content' | 'created_at' | 'author_id'>>,
+  patch: Partial<
+    Omit<NodeSnapshot, 'id' | 'content' | 'created_at' | 'author_id'>
+  >,
 ): void {
   const node = nodes.get(id);
   if (!node) return;
@@ -110,9 +135,14 @@ export function setNodeAcl(id: string, acl: NodeAcl): void {
 /** Read-only conversion of a Y.Map node into a plain object for rendering. */
 export function nodeToSnapshot(map: NodeMap): NodeSnapshot {
   const content = map.get('content');
+  const type = (map.get('type') as NodeKind) ?? 'sticky';
+  const stickyDefaults = DEFAULT_STICKY_TEXT;
+  const textDefaults = DEFAULT_TEXT_NODE_TEXT;
+  const textBase = type === 'sticky' ? stickyDefaults : textDefaults;
+
   return {
     id: (map.get('id') as string) ?? '',
-    type: (map.get('type') as NodeKind) ?? 'sticky',
+    type,
     x: (map.get('x') as number) ?? 0,
     y: (map.get('y') as number) ?? 0,
     width: (map.get('width') as number) ?? 0,
@@ -126,6 +156,14 @@ export function nodeToSnapshot(map: NodeMap): NodeSnapshot {
     created_at: (map.get('created_at') as number) ?? 0,
     acl: ((map.get('acl') as NodeAcl) ?? { locked: false }),
     intent: (map.get('intent') as string | null) ?? null,
+    fontSize: typeof map.get('fontSize') === 'number' ? (map.get('fontSize') as number) : textBase.fontSize,
+    textColor: typeof map.get('textColor') === 'string' ? (map.get('textColor') as string) : textBase.textColor,
+    fontBold: typeof map.get('fontBold') === 'boolean' ? (map.get('fontBold') as boolean) : textBase.fontBold,
+    fontItalic: typeof map.get('fontItalic') === 'boolean' ? (map.get('fontItalic') as boolean) : textBase.fontItalic,
+    textUnderline:
+      typeof map.get('textUnderline') === 'boolean'
+        ? (map.get('textUnderline') as boolean)
+        : textBase.textUnderline,
   };
 }
 

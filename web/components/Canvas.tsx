@@ -12,6 +12,7 @@ import { Cursors } from './Cursors';
 import { EditableText } from './EditableText';
 import { AclEditor } from './AclEditor';
 import { ShapeRenderer } from './ShapeRenderer';
+import { NodeFormatBar } from './NodeFormatBar';
 import {
   appendPenPoints,
   createNode,
@@ -47,6 +48,7 @@ export default function Canvas({ userId, role }: CanvasProps) {
   const setStage = useUiStore((s) => s.setStage);
   const setSelected = useUiStore((s) => s.setSelected);
   const setEditing = useUiStore((s) => s.setEditing);
+  const stickyDraftFill = useUiStore((s) => s.stickyDraftFill);
   const setTool = useUiStore((s) => s.setTool);
 
   const nodes = useYjsNodes();
@@ -183,6 +185,7 @@ export default function Canvas({ userId, role }: CanvasProps) {
         x: pos.x,
         y: pos.y,
         author_id: userId,
+        ...(tool === 'sticky' ? { fill: stickyDraftFill } : {}),
       });
       setSelected(id);
       // Auto-enter edit mode for fresh stickies / text blocks
@@ -295,6 +298,11 @@ export default function Canvas({ userId, role }: CanvasProps) {
           ))}
         </Layer>
       </Stage>
+
+      {/* Text + sticky formatting (bottom) */}
+      <div className="pointer-events-none absolute inset-x-0 bottom-3 z-[35] flex justify-center px-2">
+        <NodeFormatBar node={selectedNode ?? null} role={role} />
+      </div>
 
       {/* Cursor overlay (HTML on top of Konva) */}
       <Cursors stagePos={stagePos} stageScale={stageScale} />
