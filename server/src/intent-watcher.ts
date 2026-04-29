@@ -1,5 +1,5 @@
 import * as Y from 'yjs';
-import { classify } from './classifier.js';
+import { classify, extractTodos } from './classifier.js';
 import { persistYjsUpdate } from './event-log.js';
 import { broadcastToRoom } from './rooms.js';
 
@@ -21,6 +21,11 @@ async function applyIntent(
   text: string
 ): Promise<void> {
   const intent = await classify(text);
+  
+  let todos: string[] = [];
+  if (intent === 'action_item') {
+    todos = await extractTodos(text);
+  }
 
   const doc = nodeMap.doc;
   if (!doc) return;
@@ -34,7 +39,20 @@ async function applyIntent(
 
   doc.transact(() => {
     nodeMap.set('intent', intent);
+    
+    if (intent === 'action_item') {
+      // Create todo objects
+      const todoObjects = todos.map((t, i) => ({
+        id: `${nodeId}-todo-${Date.now()}-${i}`,
+        text: t,
+        status: 'open',
+      }));
+      nodeMap.set('todos', todoObjects);
+    } else {
+      nodeMap.delete('todos');
+    }
   }, SERVER_INTENT_ORIGIN);
+
 
   doc.off('update', captureUpdate);
 
