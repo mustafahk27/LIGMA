@@ -1,9 +1,16 @@
 import type * as Y from 'yjs';
 
+export type TaskKind = 'action_item' | 'open_question';
+
+export type TaskStatus = 'open' | 'inprogress' | 'completed' | 'closed';
+
 export interface TodoItem {
   id: string;
   text: string;
-  status: 'open' | 'in_progress' | 'closed';
+  status: TaskStatus | 'in_progress';
+  kind?: TaskKind;
+  assigneeId?: string | null;
+  response?: string | null;
 }
 
 export type NodeKind =

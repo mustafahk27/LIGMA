@@ -4,6 +4,7 @@ import { getEventsSince, persistYjsUpdate, appendEvent } from './event-log.js';
 import { validateUpdate, type Role, type ValidationResult } from './rbac.js';
 import { watchRoomDoc } from './intent-watcher.js';
 import { WebSocket } from 'ws';
+import { collectTaskNotifications, type TaskTodo } from './task-notifications.js';
 
 // Throttles node_updated events (2s cooldown per node ID)
 const lastUpdateMap = new Map<string, number>();
@@ -114,10 +115,15 @@ export function applyAndBroadcast(
   
   // Pre-snapshot node types so we know what was deleted
   const beforeTypes = new Map<string, string>();
+  const beforeTodos = new Map<string, TaskTodo[]>();
   for (const key of beforeKeys) {
     const map = nodesMap.get(key);
     if (map instanceof Y.Map) {
       beforeTypes.set(key, String(map.get('type') ?? 'node'));
+      const todos = map.get('todos');
+      if (Array.isArray(todos)) {
+        beforeTodos.set(key, todos as TaskTodo[]);
+      }
     }
   }
 
@@ -160,9 +166,37 @@ export function applyAndBroadcast(
   }
 
   for (const key of changedKeys) {
+    const nodeMap = nodesMap.get(key);
+    if (nodeMap instanceof Y.Map) {
+      const afterTodos = Array.isArray(nodeMap.get('todos')) ? (nodeMap.get('todos') as TaskTodo[]) : [];
+      if (afterTodos.length > 0) {
+        const prevTodos = beforeTodos.get(key) ?? [];
+        void collectTaskNotifications({
+          roomId,
+          actorId,
+          nodeId: key,
+          nodeAuthorId: String(nodeMap.get('author_id') ?? ''),
+          nodeContent: (() => {
+            const content = nodeMap.get('content');
+            if (content instanceof Y.Text) return content.toString();
+            if (typeof content === 'string') return content;
+            return '';
+          })(),
+          nodeIntent: nodeMap.get('intent') as string | null | undefined,
+          beforeTodos: prevTodos,
+          afterTodos,
+        }).then((events) => {
+          for (const event of events) {
+            appendEvent(roomId, actorId, event.event_type, event.payload);
+          }
+        }).catch((err) => {
+          console.error('[ydoc-store] task notification failed:', err);
+        });
+      }
+    }
+
     if (!beforeKeys.has(key) && afterKeys.has(key)) {
       // Created
-      const nodeMap = nodesMap.get(key);
       const nodeType = nodeMap instanceof Y.Map ? String(nodeMap.get('type') ?? 'node') : 'node';
       const label = nodeLabel(nodeMap);
       appendEvent(roomId, actorId, 'node_created', { nodeId: key, nodeType, label });

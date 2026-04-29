@@ -21,7 +21,7 @@ export default function LoginPage() {
   }, [hydrate]);
 
   useEffect(() => {
-    if (token) router.replace('/dashboard');
+    if (token) router.replace('/');
   }, [token, router]);
 
   async function handleSubmit(e: FormEvent) {
@@ -31,7 +31,7 @@ export default function LoginPage() {
     try {
       const res = await auth.login({ email, password });
       setAuth(res.user, res.token);
-      router.push('/dashboard');
+      router.push('/');
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Login failed');
     } finally {
