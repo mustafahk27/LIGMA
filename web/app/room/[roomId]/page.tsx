@@ -19,6 +19,7 @@ import { setLocalIdentity, clearLocalAwareness } from '@/lib/awareness-identity'
 import { useOnlineMembers } from '@/lib/use-online-members';
 import type { Role } from '@/lib/node-types';
 import { useYjsNodes } from '@/lib/use-yjs-nodes';
+import { updateTodo } from '@/lib/nodes';
 import {
   clearCanvasHistory,
   canRedoCanvas,
@@ -171,12 +172,15 @@ export default function RoomPage() {
         for (const todo of node.todos) {
           allTasks.push({
             id: todo.id,
+            nodeId: node.id,
             text: todo.text,
-            status: todo.status,
+            status: todo.status === 'in_progress' ? 'inprogress' : todo.status,
+            kind: todo.kind ?? (node.intent === 'open_question' ? 'open_question' : 'action_item'),
             authorName: room?.members?.find((m) => m.id === node.author_id)?.name || 'Unknown',
             authorColor: room?.members?.find((m) => m.id === node.author_id)?.color || '#ccc',
             createdAt: new Date(node.created_at).toISOString(),
-            nodeId: node.id,
+            assigneeId: typeof todo.assigneeId === 'string' ? todo.assigneeId : null,
+            response: typeof todo.response === 'string' ? todo.response : '',
           });
         }
       }
@@ -522,6 +526,8 @@ export default function RoomPage() {
             ) : (
               <TaskBoard
                 items={tasks}
+                members={room?.members ?? []}
+                currentUserId={user.id}
                 onJump={(id) => {
                   const node = nodes.find(n => n.id === id);
                   if (node) {
@@ -529,6 +535,7 @@ export default function RoomPage() {
                     useUiStore.getState().setSelected(id);
                   }
                 }}
+                onUpdateTask={(nodeId, todoId, patch) => updateTodo(nodeId, todoId, patch)}
               />
             )}
           </div>

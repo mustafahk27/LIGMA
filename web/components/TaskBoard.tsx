@@ -1,31 +1,48 @@
 'use client';
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
+import type { TaskKind, TaskStatus } from '@/lib/node-types';
 
 export interface TaskItem {
   id: string;
+  nodeId: string;
   text: string;
   authorName: string;
   authorColor: string;
-  createdAt: string; // ISO string
-  status: 'open' | 'in_progress' | 'closed';
-  nodeId: string;
+  createdAt: string;
+  status: TaskStatus;
+  kind: TaskKind;
+  assigneeId?: string | null;
+  response?: string;
+}
+
+type RoomMember = { id: string; name: string; color: string; role: string };
+
+interface TaskUpdatePatch {
+  status?: TaskStatus;
+  assigneeId?: string | null;
+  response?: string;
 }
 
 interface TaskBoardProps {
   items: TaskItem[];
+  members: RoomMember[];
+  currentUserId: string;
   onJump?: (id: string) => void;
+  onUpdateTask?: (nodeId: string, todoId: string, patch: TaskUpdatePatch) => void;
 }
 
-export function TaskBoard({ items, onJump }: TaskBoardProps) {
+export function TaskBoard({ items, members, currentUserId, onJump, onUpdateTask }: TaskBoardProps) {
   const [collapsed, setCollapsed] = useState(false);
+  const [editing, setEditing] = useState<TaskItem | null>(null);
+
+  const memberList = useMemo(() => members, [members]);
 
   return (
     <div
       className="flex flex-col border-l border-[var(--border)] bg-[var(--surface)] transition-all duration-200 flex-shrink-0"
       style={{ width: collapsed ? '40px' : '280px' }}
     >
-      {/* Header */}
       <div className="flex items-center justify-between px-3 py-3 border-b border-[var(--border)] flex-shrink-0">
         {!collapsed && (
           <div className="flex items-center gap-2 min-w-0">
@@ -63,7 +80,6 @@ export function TaskBoard({ items, onJump }: TaskBoardProps) {
         </button>
       </div>
 
-      {/* Body */}
       {!collapsed && (
         <div className="flex-1 overflow-y-auto p-3 flex flex-col gap-2">
           {items.length === 0 ? (
@@ -73,12 +89,28 @@ export function TaskBoard({ items, onJump }: TaskBoardProps) {
               <TaskCard
                 key={item.id}
                 item={item}
+                members={memberList}
+                currentUserId={currentUserId}
                 onJump={onJump}
+                onEdit={() => setEditing(item)}
                 delay={i * 0.04}
               />
             ))
           )}
         </div>
+      )}
+
+      {editing && onUpdateTask && (
+        <TaskEditor
+          item={editing}
+          members={memberList}
+          currentUserId={currentUserId}
+          onClose={() => setEditing(null)}
+          onSave={(patch) => {
+            onUpdateTask(editing.nodeId, editing.id, patch);
+            setEditing(null);
+          }}
+        />
       )}
     </div>
   );
@@ -98,7 +130,7 @@ function EmptyTaskBoard() {
         </svg>
       </div>
       <p className="text-xs text-[var(--text-3)] leading-relaxed">
-        Action items will appear here as your team writes them
+        Tasks and open questions will appear here as your team writes them
       </p>
     </div>
   );
@@ -106,38 +138,81 @@ function EmptyTaskBoard() {
 
 function TaskCard({
   item,
+  members,
+  currentUserId,
   onJump,
+  onEdit,
   delay,
 }: {
   item: TaskItem;
+  members: RoomMember[];
+  currentUserId: string;
   onJump?: (id: string) => void;
+  onEdit: () => void;
   delay: number;
 }) {
   const snippet = item.text.length > 80 ? item.text.slice(0, 80) + '…' : item.text;
   const timeAgo = formatTimeAgo(item.createdAt);
   const initial = item.authorName[0]?.toUpperCase() ?? '?';
+  const assignee = members.find((m) => m.id === item.assigneeId);
+  const assigneeLabel = assignee ? (assignee.id === currentUserId ? 'You' : assignee.name) : 'Unassigned';
 
   return (
     <div
       className="card p-3 flex flex-col gap-2 animate-slide-right hover:border-[var(--border-2)] transition-colors group"
       style={{ animationDelay: `${delay}s` }}
     >
-      {/* Text */}
       <div className="flex items-start gap-2">
         <div className="flex-1">
           <p className="text-xs text-[var(--text)] leading-relaxed font-medium">{snippet}</p>
+          <div className="mt-1 flex flex-wrap gap-1.5">
+            <span className="text-[9px] font-semibold px-1.5 py-0.5 rounded uppercase tracking-wider bg-[var(--surface-2)] text-[var(--text-3)]">
+              {item.kind === 'open_question' ? 'Question' : 'Task'}
+            </span>
+            <span
+              className="text-[9px] font-semibold px-1.5 py-0.5 rounded uppercase tracking-wider"
+              style={{
+                background:
+                  item.status === 'closed'
+                    ? 'var(--text-3)'
+                    : item.status === 'completed'
+                      ? 'var(--success)'
+                      : item.status === 'inprogress'
+                        ? 'var(--warning)'
+                        : 'var(--surface-2)',
+                color: item.status === 'inprogress' ? '#000' : item.status === 'open' ? 'var(--text-2)' : '#fff',
+              }}
+            >
+              {item.status.replace(/_/g, ' ')}
+            </span>
+            <span className="text-[9px] font-semibold px-1.5 py-0.5 rounded uppercase tracking-wider bg-[var(--surface-2)] text-[var(--text-3)]">
+              {assigneeLabel}
+            </span>
+          </div>
+          {item.kind === 'open_question' && item.response?.trim() && (
+            <p className="mt-2 text-[11px] leading-relaxed text-[var(--text-2)] border-l-2 border-[var(--border)] pl-2">
+              {item.response}
+            </p>
+          )}
         </div>
-        <div className="flex-shrink-0">
+
+        <div className="flex-shrink-0 flex flex-col items-end gap-1.5">
+          <button
+            type="button"
+            onClick={onEdit}
+            className="text-[10px] font-semibold px-2 py-1 rounded bg-[var(--surface-2)] text-[var(--text-2)] hover:text-[var(--text)] transition-colors"
+          >
+            Edit
+          </button>
           <span className="text-[9px] font-bold px-1.5 py-0.5 rounded uppercase tracking-wider" style={{
-            background: item.status === 'closed' ? 'var(--success)' : item.status === 'in_progress' ? 'var(--warning)' : 'var(--surface-2)',
-            color: item.status === 'closed' ? '#fff' : item.status === 'in_progress' ? '#000' : 'var(--text-2)'
+            background: item.kind === 'open_question' ? 'rgba(251,191,36,0.18)' : 'rgba(69,117,243,0.12)',
+            color: item.kind === 'open_question' ? '#b45309' : 'var(--accent)'
           }}>
-            {item.status.replace('_', ' ')}
+            {item.kind === 'open_question' ? 'Question' : 'Task'}
           </span>
         </div>
       </div>
 
-      {/* Footer */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-1.5">
           <div
@@ -166,6 +241,110 @@ function TaskCard({
               </svg>
             </button>
           )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function TaskEditor({
+  item,
+  members,
+  currentUserId,
+  onClose,
+  onSave,
+}: {
+  item: TaskItem;
+  members: RoomMember[];
+  currentUserId: string;
+  onClose: () => void;
+  onSave: (patch: TaskUpdatePatch) => void;
+}) {
+  const [status, setStatus] = useState<TaskStatus>(item.status);
+  const [assigneeId, setAssigneeId] = useState<string>(item.assigneeId ?? '');
+  const [response, setResponse] = useState(item.response ?? '');
+  const needsResponse = item.kind === 'open_question' && status !== 'open';
+
+  function handleSave() {
+    if (needsResponse && !response.trim()) return;
+    onSave({
+      status,
+      assigneeId: assigneeId || null,
+      response: response.trim(),
+    });
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4">
+      <div className="w-full max-w-md rounded-2xl border border-[var(--border)] bg-[var(--bg)] shadow-2xl p-5">
+        <div className="flex items-start justify-between gap-3 mb-4">
+          <div>
+            <p className="text-[10px] font-semibold uppercase tracking-wider text-[var(--text-3)]">Task</p>
+            <h3 className="mt-1 text-sm font-semibold text-[var(--text)] leading-snug">{item.text}</h3>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="text-[var(--text-3)] hover:text-[var(--text)]"
+          >
+            ✕
+          </button>
+        </div>
+
+        <div className="space-y-3">
+          <label className="block">
+            <span className="block text-[10px] font-semibold uppercase tracking-wider text-[var(--text-3)] mb-1.5">Assignee</span>
+            <select
+              className="input"
+              value={assigneeId}
+              onChange={(e) => setAssigneeId(e.target.value)}
+            >
+              <option value="">Unassigned</option>
+              {members.map((member) => (
+                <option key={member.id} value={member.id}>
+                  {member.id === currentUserId ? 'You' : member.name}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <label className="block">
+            <span className="block text-[10px] font-semibold uppercase tracking-wider text-[var(--text-3)] mb-1.5">Status</span>
+            <select
+              className="input"
+              value={status}
+              onChange={(e) => setStatus(e.target.value as TaskStatus)}
+            >
+              <option value="open">Open</option>
+              <option value="inprogress">In progress</option>
+              <option value="completed">Completed</option>
+              <option value="closed">Closed</option>
+            </select>
+          </label>
+
+          {item.kind === 'open_question' && (
+            <label className="block">
+              <span className="block text-[10px] font-semibold uppercase tracking-wider text-[var(--text-3)] mb-1.5">
+                Answer or description
+              </span>
+              <textarea
+                className="input min-h-[96px] resize-y"
+                value={response}
+                onChange={(e) => setResponse(e.target.value)}
+                placeholder="Add an answer before closing the question"
+              />
+              {needsResponse && !response.trim() && (
+                <p className="mt-1 text-[11px] text-[var(--danger)]">Open question tasks need an answer before the status changes.</p>
+              )}
+            </label>
+          )}
+        </div>
+
+        <div className="mt-5 flex gap-2 justify-end">
+          <button type="button" className="btn btn-ghost" onClick={onClose}>Cancel</button>
+          <button type="button" className="btn btn-primary" onClick={handleSave} disabled={needsResponse && !response.trim()}>
+            Save changes
+          </button>
         </div>
       </div>
     </div>
