@@ -2,7 +2,7 @@
 
 import * as Y from 'yjs';
 import { ydoc, nodes } from './yjs';
-import type { NodeKind, NodeSnapshot, NodeMap, NodeAcl } from './node-types';
+import type { NodeKind, NodeSnapshot, NodeMap, NodeAcl, TodoItem, TaskStatus, TaskKind } from './node-types';
 import { DEFAULT_STICKY_TEXT, DEFAULT_TEXT_NODE_TEXT } from './node-types';
 
 /** Random short id for new nodes. */
@@ -29,6 +29,12 @@ export interface CreateNodeInput {
   fontBold?: boolean;
   fontItalic?: boolean;
   textUnderline?: boolean;
+}
+
+export interface TodoPatch {
+  status?: TaskStatus;
+  assigneeId?: string | null;
+  response?: string | null;
 }
 
 /** Default geometry for each shape type. */
@@ -155,6 +161,22 @@ export function updateNode(
   }, 'local');
 }
 
+export function updateTodo(
+  nodeId: string,
+  todoId: string,
+  patch: TodoPatch,
+): void {
+  const node = nodes.get(nodeId);
+  if (!node) return;
+
+  const current = normalizeTodoList(node.get('todos'));
+  const next = current.map((todo) => (todo.id === todoId ? { ...todo, ...patch } : todo));
+
+  ydoc.transact(() => {
+    node.set('todos', next);
+  }, 'local');
+}
+
 /** Append points to a pen stroke, used during freehand drawing. */
 export function appendPenPoints(id: string, extra: number[]): void {
   const node = nodes.get(id);
@@ -169,6 +191,13 @@ export function deleteNode(id: string): void {
   if (!nodes.has(id)) return;
   ydoc.transact(() => {
     nodes.delete(id);
+  }, 'local');
+}
+
+/** Remove every node from the shared canvas state. */
+export function clearNodes(): void {
+  ydoc.transact(() => {
+    nodes.clear();
   }, 'local');
 }
 
@@ -221,7 +250,7 @@ export function nodeToSnapshot(map: NodeMap): NodeSnapshot {
       typeof map.get('textUnderline') === 'boolean'
         ? (map.get('textUnderline') as boolean)
         : textBase.textUnderline,
-    todos: map.get('todos') as import('./node-types').TodoItem[] | undefined,
+    todos: normalizeTodoList(map.get('todos')),
   };
 }
 
@@ -349,4 +378,35 @@ export function getNodeText(id: string): Y.Text | null {
   if (!node) return null;
   const c = node.get('content');
   return c instanceof Y.Text ? c : null;
+}
+
+function normalizeTodoList(value: unknown): TodoItem[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item) => normalizeTodoItem(item))
+    .filter((item): item is TodoItem => item !== null);
+}
+
+function normalizeTodoItem(value: unknown): TodoItem | null {
+  if (!value || typeof value !== 'object') return null;
+  const raw = value as Record<string, unknown>;
+  return {
+    id: typeof raw.id === 'string' ? raw.id : '',
+    text: typeof raw.text === 'string' ? raw.text : '',
+    status: normalizeTaskStatus(raw.status),
+    kind: normalizeTaskKind(raw.kind),
+    assigneeId: typeof raw.assigneeId === 'string' ? raw.assigneeId : null,
+    response: typeof raw.response === 'string' ? raw.response : null,
+  };
+}
+
+function normalizeTaskStatus(value: unknown): TaskStatus | 'in_progress' {
+  if (value === 'in_progress') return 'in_progress';
+  if (value === 'open' || value === 'inprogress' || value === 'completed' || value === 'closed') return value;
+  return 'open';
+}
+
+function normalizeTaskKind(value: unknown): TaskKind | undefined {
+  if (value === 'action_item' || value === 'open_question') return value;
+  return undefined;
 }

@@ -25,6 +25,8 @@ async function applyIntent(
   let todos: string[] = [];
   if (intent === 'action_item') {
     todos = await extractTodos(text);
+  } else if (intent === 'open_question') {
+    todos = [text.trim()];
   }
 
   const doc = nodeMap.doc;
@@ -40,11 +42,12 @@ async function applyIntent(
   doc.transact(() => {
     nodeMap.set('intent', intent);
     
-    if (intent === 'action_item') {
+    if (intent === 'action_item' || intent === 'open_question') {
       // Create todo objects
       const todoObjects = todos.map((t, i) => ({
         id: `${nodeId}-todo-${Date.now()}-${i}`,
         text: t,
+        kind: intent,
         status: 'open',
       }));
       nodeMap.set('todos', todoObjects);

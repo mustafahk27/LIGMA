@@ -14,6 +14,8 @@ const META: Record<string, { color: string }> = {
   node_deleted: { color: '#f87171' },
   node_locked:  { color: '#fbbf24' },
   node_unlocked:{ color: '#a78bfa' },
+  task_assigned: { color: '#f59e0b' },
+  task_status_changed: { color: '#22c55e' },
 };
 
 const TYPE_LABEL: Record<string, string> = {
@@ -48,6 +50,14 @@ function buildTitle(event: AppEvent): string {
     case 'node_deleted': return `Deleted ${type}${lbl}`;
     case 'node_locked':  return `Locked ${type}${lbl}`;
     case 'node_unlocked':return `Unlocked ${type}${lbl}`;
+    case 'task_assigned': {
+      const assignee = typeof p?.assigneeName === 'string' ? p.assigneeName : 'someone';
+      return `Assigned task${lbl} to ${assignee}`;
+    }
+    case 'task_status_changed': {
+      const status = typeof p?.status === 'string' ? p.status.replace(/_/g, ' ') : 'updated';
+      return `Marked task${lbl} as ${status}`;
+    }
     default: return event.event_type.replace(/_/g, ' ');
   }
 }
@@ -79,6 +89,7 @@ export function EventLog({ roomId, token }: EventLogProps) {
   const [expandedId,  setExpandedId]  = useState<string | null>(null);
   const [tick,        setTick]        = useState(0);
   const [initLoading, setInitLoading] = useState(true);
+  const [freshIds,    setFreshIds]    = useState<Set<string>>(new Set());
 
   const latestSeqRef = useRef(0);
   const newIds       = useRef<Set<string>>(new Set());
@@ -115,7 +126,9 @@ export function EventLog({ roomId, token }: EventLogProps) {
           const seen = data.events.filter(e => e.seq <= stored);
           const missed = data.events.filter(e => e.seq > stored);
 
-          newIds.current = new Set(seen.map(e => e.id));
+          const seenIds = new Set(seen.map(e => e.id));
+          newIds.current = seenIds;
+          setFreshIds(seenIds);
           setEvents(seen);
 
           if (missed.length > 0) {
@@ -125,7 +138,9 @@ export function EventLog({ roomId, token }: EventLogProps) {
           }
         } else {
           // Normal load (first time, or no missed events)
-          newIds.current = new Set(data.events.map(e => e.id));
+          const initialIds = new Set(data.events.map(e => e.id));
+          newIds.current = initialIds;
+          setFreshIds(initialIds);
           setEvents(data.events);
         }
       } catch { /* server not ready */ }
@@ -170,6 +185,7 @@ export function EventLog({ roomId, token }: EventLogProps) {
       localStorage.setItem(seqKey, String(data.latest_seq));
       const freshIds = new Set(data.events.map(e => e.id));
       newIds.current = freshIds;
+      setFreshIds(freshIds);
       setEvents(prev => {
         const existing = new Set(prev.map(e => e.id));
         const novel = data.events.filter(e => !existing.has(e.id));
@@ -346,10 +362,9 @@ export function EventLog({ roomId, token }: EventLogProps) {
               <EventRow
                 key={event.id}
                 event={event}
-                isNew={newIds.current.has(event.id)}
+                isNew={freshIds.has(event.id)}
                 isExpanded={expandedId === event.id}
                 onToggle={() => setExpandedId(p => p === event.id ? null : event.id)}
-                tick={tick}
               />
             ))}
           </div>
@@ -361,8 +376,8 @@ export function EventLog({ roomId, token }: EventLogProps) {
 
 // ── EventRow ──────────────────────────────────────────────────────────────────
 
-function EventRow({ event, isNew, isExpanded, onToggle, tick: _tick }:
-  { event: AppEvent; isNew: boolean; isExpanded: boolean; onToggle: () => void; tick: number }) {
+function EventRow({ event, isNew, isExpanded, onToggle }:
+  { event: AppEvent; isNew: boolean; isExpanded: boolean; onToggle: () => void }) {
 
   const color = META[event.event_type]?.color ?? '#94a3b8';
   const title = buildTitle(event);

@@ -82,6 +82,44 @@ export function leaveRoom(roomId: string, clientId: string): void {
 }
 
 /**
+ * Close every live client connection for a given user in a room.
+ * Used when membership is revoked so stale sockets cannot keep mutating state.
+ */
+export function disconnectUserFromRoom(roomId: string, userId: string): number {
+  const room = rooms.get(roomId);
+  if (!room) return 0;
+
+  let closed = 0;
+  for (const [clientId, client] of room.clients) {
+    if (client.user.id !== userId) continue;
+    closed += 1;
+    room.clients.delete(clientId);
+    if (client.ws.readyState === WebSocket.OPEN) {
+      client.ws.close(1000, 'room access removed');
+    }
+  }
+  return closed;
+}
+
+/**
+ * Tear down an entire room from memory, closing every active socket.
+ * Call this after deleting the room from Postgres.
+ */
+export function destroyRoom(roomId: string): void {
+  const room = rooms.get(roomId);
+  if (!room) return;
+
+  for (const [clientId, client] of room.clients) {
+    room.clients.delete(clientId);
+    if (client.ws.readyState === WebSocket.OPEN) {
+      client.ws.close(1000, 'room deleted');
+    }
+  }
+
+  rooms.delete(roomId);
+}
+
+/**
  * Send a binary frame to every connected client in the room EXCEPT the sender.
  */
 export function broadcastToRoom(
