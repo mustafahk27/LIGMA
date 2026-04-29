@@ -82,6 +82,8 @@ class WsProvider {
   private replayTimer: ReturnType<typeof setTimeout> | null = null;
   private replayQueue: Uint8Array[] = [];
   private replayFinalSeq = 0;
+  /** Buffer for live updates received while a replay is animating */
+  private liveUpdateBuffer: Uint8Array[] = [];
 
   constructor() {
     // ── Register Yjs + awareness listeners ONCE (not per reconnect) ──────────
@@ -260,7 +262,14 @@ class WsProvider {
     // Binary frame → Yjs update delta
     if (event.data instanceof ArrayBuffer) {
       const update = new Uint8Array(event.data);
-      Y.applyUpdate(ydoc, update, 'remote');
+      // If we are currently replaying missed history, buffer live updates
+      // so they don't 'snap' the canvas to the future before the replay
+      // animation can finish.
+      if (useWsStore.getState().replay.active) {
+        this.liveUpdateBuffer.push(update);
+      } else {
+        Y.applyUpdate(ydoc, update, 'remote');
+      }
       return;
     }
 
@@ -417,6 +426,8 @@ class WsProvider {
       this.replayFinalSeq = 0;
     }
     useWsStore.getState().setReplay({ active: false, total: 0, done: 0 });
+    // Replay finished — apply all live updates that happened while we were animating
+    this.flushLiveBuffer();
   }
 
   private cancelReplay(): void {
@@ -428,6 +439,20 @@ class WsProvider {
     this.replayFinalSeq = 0;
     if (useWsStore.getState().replay.active) {
       useWsStore.getState().setReplay({ active: false, total: 0, done: 0 });
+    }
+    // Flush buffered live updates immediately if replay is cancelled
+    this.flushLiveBuffer();
+  }
+
+  private flushLiveBuffer(): void {
+    const updates = this.liveUpdateBuffer;
+    this.liveUpdateBuffer = [];
+    for (const u of updates) {
+      try {
+        Y.applyUpdate(ydoc, u, 'remote');
+      } catch (err) {
+        console.warn('[ws-provider] Failed to apply buffered live update:', err);
+      }
     }
   }
 

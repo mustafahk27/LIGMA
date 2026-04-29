@@ -2,6 +2,7 @@ import type { WebSocket } from 'ws';
 import * as Y from 'yjs';
 import { getEventsSince, getLatestSeq } from './event-log.js';
 import { encodeRoomState } from './ydoc-store.js';
+import { query } from './db.js';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -70,17 +71,24 @@ export async function sendFullState(ws: WebSocket, roomId: string): Promise<void
  */
 async function encodeStateAtSeq(roomId: string, targetSeq: number): Promise<Uint8Array> {
   if (targetSeq <= 0) return new Uint8Array(0);
-  const events = await getEventsSince(roomId, 0, 100_000);
+  
+  // Targeted query for performance: only fetch yjs_updates for this room up to the target sequence.
+  // pg returns BIGINT as string, but Postgres handles the comparison correctly.
+  const result = await query< { payload: { update?: string } } >(
+    `SELECT payload FROM events 
+     WHERE room_id = $1 AND seq <= $2 AND event_type = 'yjs_update' 
+     ORDER BY seq ASC`,
+    [roomId, targetSeq]
+  );
+  
   const tempDoc = new Y.Doc();
-  for (const ev of events) {
-    if (ev.seq > targetSeq) break;
-    if (ev.event_type !== 'yjs_update') continue;
-    const b64 = (ev.payload as { update?: string }).update;
+  for (const row of result.rows) {
+    const b64 = row.payload.update;
     if (!b64) continue;
     try {
       Y.applyUpdate(tempDoc, Uint8Array.from(Buffer.from(b64, 'base64')));
     } catch (err) {
-      console.error(`[sync] base-state apply failed seq=${ev.seq}:`, err);
+      console.error(`[sync] base-state apply failed:`, err);
     }
   }
   return Y.encodeStateAsUpdate(tempDoc);
