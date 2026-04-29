@@ -13,6 +13,7 @@ export default function Root() {
 
   const [roomList, setRoomList] = useState<Room[]>([]);
   const [loadingRooms, setLoadingRooms] = useState(true);
+  const [roomsError, setRoomsError] = useState('');
   const [creating, setCreating] = useState(false);
   const [newRoomName, setNewRoomName] = useState('');
   const [showCreate, setShowCreate] = useState(false);
@@ -33,9 +34,13 @@ export default function Root() {
 
   async function loadRooms(activeToken: string) {
     setLoadingRooms(true);
+    setRoomsError('');
     try {
       const list = await rooms.list(activeToken);
       setRoomList(list);
+    } catch (err: unknown) {
+      setRoomList([]);
+      setRoomsError(err instanceof Error ? err.message : 'Failed to load rooms');
     } finally {
       setLoadingRooms(false);
     }
@@ -192,6 +197,12 @@ export default function Root() {
             <h2 className="text-sm font-semibold text-[var(--text)]">Rooms</h2>
             <span className="text-[11px] text-[var(--text-3)]">{loadingRooms ? 'loading…' : `${roomList.length} total`}</span>
           </div>
+
+          {roomsError && (
+            <div className="px-4 pt-3 text-sm text-[var(--danger)]">
+              {roomsError}
+            </div>
+          )}
 
           {loadingRooms ? (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 p-4">

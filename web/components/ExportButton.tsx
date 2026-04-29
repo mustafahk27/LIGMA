@@ -10,6 +10,8 @@ interface Props {
   roomId: string;
   roomName: string;
   token: string;
+  /** Custom trigger renderer — receives an `open` callback. Falls back to a default button. */
+  renderTrigger?: (open: () => void) => React.ReactNode;
 }
 
 type Mode = 'narrative' | 'structured';
@@ -72,7 +74,7 @@ function captureFullCanvas(stage: Konva.Stage): string | null {
   return dataUrl.replace(/^data:image\/\w+;base64,/, '');
 }
 
-export function ExportButton({ stageRef, roomId, roomName, token }: Props) {
+export function ExportButton({ stageRef, roomId, roomName, token, renderTrigger }: Props) {
   const [open, setOpen] = useState(false);
   const [mode, setMode] = useState<Mode>('narrative');
   const [loading, setLoading] = useState(false);
@@ -123,24 +125,30 @@ export function ExportButton({ stageRef, roomId, roomName, token }: Props) {
     }
   }
 
+  const openDialog = () => { setOpen(true); setError(null); };
+
   return (
     <>
-      <button
-        className="btn btn-ghost text-xs px-2.5 py-1 flex-shrink-0"
-        onClick={() => { setOpen(true); setError(null); }}
-        title="Export Summary"
-      >
-        <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
-          <path
-            d="M6 1v7M3 5l3 3 3-3M1 9v1.5A.5.5 0 001.5 11h9a.5.5 0 00.5-.5V9"
-            stroke="currentColor"
-            strokeWidth="1.4"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          />
-        </svg>
-        Export
-      </button>
+      {renderTrigger ? (
+        renderTrigger(openDialog)
+      ) : (
+        <button
+          className="btn btn-ghost text-xs px-2.5 py-1 flex-shrink-0"
+          onClick={openDialog}
+          title="Export Summary"
+        >
+          <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+            <path
+              d="M6 1v7M3 5l3 3 3-3M1 9v1.5A.5.5 0 001.5 11h9a.5.5 0 00.5-.5V9"
+              stroke="currentColor"
+              strokeWidth="1.4"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </svg>
+          Export
+        </button>
+      )}
 
       {open && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
