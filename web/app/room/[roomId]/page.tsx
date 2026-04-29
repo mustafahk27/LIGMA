@@ -570,7 +570,7 @@ export default function RoomPage() {
               <TaskBoard
                 items={tasks}
                 members={room?.members ?? []}
-                currentUserId={user.id}
+                currentUserId={user?.id ?? ''}
                 onJump={(id) => {
                   const node = nodes.find(n => n.id === id);
                   if (node) {
