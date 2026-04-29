@@ -167,7 +167,7 @@ function StickyBody({ node, isEditing }: { node: NodeSnapshot; isEditing: boolea
           textDecoration={node.textUnderline ? 'underline' : undefined}
         />
       )}
-      {node.intent && <IntentBadge intent={node.intent} />}
+      {node.intent && node.intent !== 'none' && <IntentBadge intent={node.intent} />}
     </>
   );
 }

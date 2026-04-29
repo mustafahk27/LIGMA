@@ -50,10 +50,16 @@ async function flushBuffer(): Promise<void> {
     return `($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4})`;
   });
 
-  await query(
-    `INSERT INTO events (room_id, actor_id, event_type, payload) VALUES ${placeholders.join(', ')}`,
-    values
-  );
+  try {
+    await query(
+      `INSERT INTO events (room_id, actor_id, event_type, payload) VALUES ${placeholders.join(', ')}`,
+      values
+    );
+  } catch (err) {
+    console.error('[event-log] flushBuffer failed, requeueing batch:', err);
+    // Put items back so they're retried on the next flush
+    writeBuffer.unshift(...batch);
+  }
 }
 
 export function appendEvent(

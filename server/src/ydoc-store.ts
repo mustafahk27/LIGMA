@@ -2,6 +2,7 @@ import * as Y from 'yjs';
 import { getRoomOrCreate, broadcastToRoom } from './rooms.js';
 import { getEventsSince, persistYjsUpdate, appendEvent } from './event-log.js';
 import { validateUpdate, type Role, type ValidationResult } from './rbac.js';
+import { watchRoomDoc } from './intent-watcher.js';
 import { WebSocket } from 'ws';
 
 // Throttles node_updated events (2s cooldown per node ID)
@@ -9,18 +10,35 @@ const lastUpdateMap = new Map<string, number>();
 
 // ─── Y.Doc Bootstrap (cold-start replay from Postgres) ───────────────────────
 
+// Tracks in-flight hydrations so concurrent first-connections share one promise
+const hydratingRooms = new Map<string, Promise<void>>();
+
 /**
  * Called the first time a client connects to a room whose Y.Doc is empty.
  * Replays all persisted yjs_update events from Postgres to reconstruct state.
  *
- * Multiple concurrent first-connections won't double-apply because joinRoom
- * is gated until this resolves (see ws.ts).
+ * Concurrent calls for the same room coalesce onto a single in-flight promise
+ * so watchers are attached exactly once.
  */
-export async function hydrateDocFromDB(roomId: string): Promise<void> {
+export function hydrateDocFromDB(roomId: string): Promise<void> {
   const room = getRoomOrCreate(roomId);
 
-  // Already hydrated or has live clients who seeded it
-  if ((room.doc as Y.Doc & { _hydrated?: boolean })._hydrated) return;
+  // Already fully hydrated
+  if ((room.doc as Y.Doc & { _hydrated?: boolean })._hydrated) return Promise.resolve();
+
+  // In-flight hydration — join it instead of starting a second one
+  const existing = hydratingRooms.get(roomId);
+  if (existing) return existing;
+
+  const promise = _hydrateDocFromDB(roomId).finally(() => {
+    hydratingRooms.delete(roomId);
+  });
+  hydratingRooms.set(roomId, promise);
+  return promise;
+}
+
+async function _hydrateDocFromDB(roomId: string): Promise<void> {
+  const room = getRoomOrCreate(roomId);
 
   const events = await getEventsSince(roomId, 0, 100_000);
 
@@ -38,6 +56,12 @@ export async function hydrateDocFromDB(roomId: string): Promise<void> {
 
   (room.doc as Y.Doc & { _hydrated?: boolean })._hydrated = true;
   console.log(`[ydoc-store] Room ${roomId} hydrated with ${events.length} events`);
+
+  // Intent updates are now persisted as yjs_update events (actor='__server__'),
+  // so they are already restored by the replay loop above. No separate step needed.
+
+  // Start watching for content changes so we can classify intent
+  watchRoomDoc(roomId, room.doc);
 }
 
 // ─── Apply + Persist + Broadcast ─────────────────────────────────────────────
