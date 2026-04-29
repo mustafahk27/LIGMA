@@ -220,6 +220,7 @@ export function nodeToSnapshot(map: NodeMap): NodeSnapshot {
       typeof map.get('textUnderline') === 'boolean'
         ? (map.get('textUnderline') as boolean)
         : textBase.textUnderline,
+    todos: map.get('todos') as import('./node-types').TodoItem[] | undefined,
   };
 }
 
