@@ -19,6 +19,13 @@ import { setLocalIdentity, clearLocalAwareness } from '@/lib/awareness-identity'
 import { useOnlineMembers } from '@/lib/use-online-members';
 import type { Role } from '@/lib/node-types';
 import { useYjsNodes } from '@/lib/use-yjs-nodes';
+import {
+  clearCanvasHistory,
+  canRedoCanvas,
+  canUndoCanvas,
+  redoCanvas,
+  undoCanvas,
+} from '@/lib/history';
 
 /* Konva needs `window` — defer the entire Canvas to client-only */
 const Canvas = dynamic(() => import('@/components/Canvas'), {
@@ -107,6 +114,21 @@ const TOOLS: { id: Tool; label: string; icon: React.ReactNode }[] = [
       <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
         <path d="M2 12L9.5 4.5a2 2 0 012.8 2.8L4.8 14.8" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
         <path d="M9 5l1.5 1.5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+      </svg>
+    ),
+  },
+  {
+    id: 'erase',
+    label: 'Eraser (E)',
+    icon: (
+      <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+        <path
+          d="M3 9l3.9-3.9a1.8 1.8 0 012.6 0l1.4 1.4a1.8 1.8 0 010 2.6L8 12H5.2L3 9z"
+          stroke="currentColor"
+          strokeWidth="1.3"
+          strokeLinejoin="round"
+        />
+        <path d="M8.2 12H12" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
       </svg>
     ),
   },
@@ -231,6 +253,7 @@ export default function RoomPage() {
       l: 'line',
       a: 'arrow',
       p: 'pen',
+      e: 'erase',
     };
     function onKey(e: KeyboardEvent) {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
@@ -240,6 +263,42 @@ export default function RoomPage() {
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [setTool]);
+
+  useEffect(() => {
+    clearCanvasHistory();
+  }, [roomId]);
+
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (myRole === 'viewer') return;
+      if (!(e.ctrlKey || e.metaKey)) return;
+
+      const key = e.key.toLowerCase();
+      const isUndo = key === 'z' && !e.shiftKey;
+      const isRedo = key === 'y' || (key === 'z' && e.shiftKey);
+
+      if (!isUndo && !isRedo) return;
+
+      const target = e.target as HTMLElement | null;
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) {
+        return;
+      }
+
+      if (isUndo && canUndoCanvas()) {
+        e.preventDefault();
+        undoCanvas();
+        return;
+      }
+
+      if (isRedo && canRedoCanvas()) {
+        e.preventDefault();
+        redoCanvas();
+      }
+    }
+
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [myRole]);
 
   async function loadRoom() {
     if (!token || !roomId) return;
@@ -328,6 +387,41 @@ export default function RoomPage() {
               {t.icon}
             </button>
           ))}
+        </div>
+
+        <div className="flex items-center gap-1 p-1 rounded-lg bg-[var(--surface)] border border-[var(--border)]">
+          <button
+            type="button"
+            title="Undo (Ctrl/Cmd+Z)"
+            onClick={() => undoCanvas()}
+            disabled={myRole === 'viewer' || !canUndoCanvas()}
+            className="h-7 w-7 flex items-center justify-center rounded-md transition-all disabled:cursor-not-allowed"
+            style={{
+              color: 'var(--text-3)',
+              opacity: myRole === 'viewer' || !canUndoCanvas() ? 0.4 : 1,
+            }}
+          >
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden>
+              <path d="M5 4L2 7l3 3" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
+              <path d="M3 7h5a3 3 0 110 6H6" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
+            </svg>
+          </button>
+          <button
+            type="button"
+            title="Redo (Ctrl/Cmd+Y or Ctrl/Cmd+Shift+Z)"
+            onClick={() => redoCanvas()}
+            disabled={myRole === 'viewer' || !canRedoCanvas()}
+            className="h-7 w-7 flex items-center justify-center rounded-md transition-all disabled:cursor-not-allowed"
+            style={{
+              color: 'var(--text-3)',
+              opacity: myRole === 'viewer' || !canRedoCanvas() ? 0.4 : 1,
+            }}
+          >
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden>
+              <path d="M9 4l3 3-3 3" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
+              <path d="M11 7H6a3 3 0 100 6h2" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
+            </svg>
+          </button>
         </div>
 
         <div className="flex-1" />
