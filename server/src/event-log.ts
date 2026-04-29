@@ -7,7 +7,9 @@ export type EventType =
   | 'node_deleted'
   | 'node_locked'
   | 'node_unlocked'
-  | 'intent_classified';
+  | 'intent_classified'
+  | 'task_assigned'
+  | 'task_status_changed';
 
 export interface AppEvent {
   id: string;

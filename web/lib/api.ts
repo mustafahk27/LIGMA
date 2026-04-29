@@ -86,6 +86,47 @@ export interface AppEvent {
   actor_color: string;
 }
 
+export interface UserDashboardRoom {
+  room_id: string;
+  room_name: string;
+  member_count: number;
+  missed_updates: number;
+  latest_seq: number;
+  last_seen_seq: number;
+  assigned_to_me: number;
+  assigned_open_to_me: number;
+  total_tasks: number;
+  completed_tasks: number;
+  closed_tasks: number;
+  updated_at: string | null;
+  last_seen_at: string | null;
+}
+
+export interface UserDashboardSummary {
+  total_rooms: number;
+  rooms_with_missed_updates: number;
+  total_missed_updates: number;
+  assigned_to_me: number;
+  assigned_open_to_me: number;
+}
+
+export interface RoomDashboardRoom {
+  room_id: string;
+  room_name: string;
+  member_count: number;
+  total_tasks: number;
+  open_tasks: number;
+  inprogress_tasks: number;
+  completed_tasks: number;
+  closed_tasks: number;
+  completion_rate: number;
+  latest_seq: number;
+  last_seen_seq: number;
+  missed_updates: number;
+  last_seen_at: string | null;
+  updated_at: string | null;
+}
+
 export const rooms = {
   create: (name: string, token: string) =>
     apiFetch<Room>('/rooms', { method: 'POST', body: JSON.stringify({ name }), token }),
@@ -98,6 +139,13 @@ export const rooms = {
       `/rooms/${id}/events?after_seq=${afterSeq}&limit=80`,
       { token }
     ),
+};
+
+export const dashboard = {
+  user: (token: string) =>
+    apiFetch<{ summary: UserDashboardSummary; rooms: UserDashboardRoom[] }>('/dashboard/user', { token }),
+  rooms: (token: string) =>
+    apiFetch<{ rooms: RoomDashboardRoom[] }>('/dashboard/rooms', { token }),
 };
 
 // ── Invites ───────────────────────────────────────────────────────────────────

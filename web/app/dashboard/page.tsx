@@ -1,18 +1,28 @@
 'use client';
 
-import { useState, useEffect, FormEvent } from 'react';
+import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { useAuthStore } from '@/store/auth';
-import { rooms, auth } from '@/lib/api';
-import type { Room } from '@/lib/api';
+import { auth, dashboard, rooms } from '@/lib/api';
+import type { Room, RoomDashboardRoom, UserDashboardRoom, UserDashboardSummary } from '@/lib/api';
+
+type ViewMode = 'user' | 'room';
 
 export default function DashboardPage() {
   const router = useRouter();
   const { user, token, hydrate, hydrated, clearAuth } = useAuthStore();
 
+  const [view, setView] = useState<ViewMode>('user');
   const [roomList, setRoomList] = useState<Room[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [userSummary, setUserSummary] = useState<UserDashboardSummary | null>(null);
+  const [userRooms, setUserRooms] = useState<UserDashboardRoom[]>([]);
+  const [roomStats, setRoomStats] = useState<RoomDashboardRoom[]>([]);
+
+  const [loadingRooms, setLoadingRooms] = useState(true);
+  const [loadingStats, setLoadingStats] = useState(true);
+  const [statsError, setStatsError] = useState('');
+
   const [creating, setCreating] = useState(false);
   const [newRoomName, setNewRoomName] = useState('');
   const [showCreate, setShowCreate] = useState(false);
@@ -28,34 +38,44 @@ export default function DashboardPage() {
       router.replace('/login');
       return;
     }
-    loadRooms();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hydrated, token]);
+    void loadAll(token);
+  }, [hydrated, token, router]);
 
-  async function loadRooms() {
-    if (!token) return;
-    setLoading(true);
+  async function loadAll(activeToken: string) {
+    setLoadingRooms(true);
+    setLoadingStats(true);
+    setStatsError('');
+
     try {
-      const list = await rooms.list(token);
+      const [list, userData, roomData] = await Promise.all([
+        rooms.list(activeToken),
+        dashboard.user(activeToken),
+        dashboard.rooms(activeToken),
+      ]);
+
       setRoomList(list);
-    } catch {
-      // silently ignore — likely no rooms yet
-      setRoomList([]);
+      setUserSummary(userData.summary);
+      setUserRooms(userData.rooms);
+      setRoomStats(roomData.rooms);
+    } catch (err: unknown) {
+      setStatsError(err instanceof Error ? err.message : 'Failed to load dashboard');
     } finally {
-      setLoading(false);
+      setLoadingRooms(false);
+      setLoadingStats(false);
     }
   }
 
   async function handleCreateRoom(e: FormEvent) {
     e.preventDefault();
     if (!token || !newRoomName.trim()) return;
+
     setCreating(true);
     setCreateError('');
     try {
       const room = await rooms.create(newRoomName.trim(), token);
-      setRoomList((prev) => [room, ...prev]);
       setNewRoomName('');
       setShowCreate(false);
+      await loadAll(token);
       router.push(`/room/${room.id}`);
     } catch (err: unknown) {
       setCreateError(err instanceof Error ? err.message : 'Failed to create room');
@@ -69,7 +89,7 @@ export default function DashboardPage() {
       try {
         await auth.logout(token);
       } catch {
-        // ignore
+        // ignore logout errors
       }
     }
     clearAuth();
@@ -79,15 +99,30 @@ export default function DashboardPage() {
   const initials = user?.name
     ? user.name
         .split(' ')
-        .map((w) => w[0])
+        .map((word) => word[0])
         .join('')
         .toUpperCase()
         .slice(0, 2)
     : '??';
 
+  const highlight = useMemo(() => {
+    if (!userSummary) {
+      return {
+        totalRooms: 0,
+        missedUpdates: 0,
+        openTasks: 0,
+      };
+    }
+
+    return {
+      totalRooms: userSummary.total_rooms,
+      missedUpdates: userSummary.total_missed_updates,
+      openTasks: userSummary.assigned_open_to_me,
+    };
+  }, [userSummary]);
+
   return (
     <div className="min-h-screen flex flex-col">
-      {/* ── Topbar ──────────────────────────────────────────────────── */}
       <header
         className="flex items-center justify-between px-6 py-3 border-b border-[var(--border)] sticky top-0 z-50"
         style={{ background: 'var(--bg)' }}
@@ -100,7 +135,6 @@ export default function DashboardPage() {
         </span>
 
         <div className="flex items-center gap-3">
-          {/* Avatar */}
           <div
             className="w-8 h-8 rounded-full flex items-center justify-center text-xs font-semibold text-white flex-shrink-0"
             style={{ background: user?.color ?? 'var(--accent)' }}
@@ -119,16 +153,62 @@ export default function DashboardPage() {
         </div>
       </header>
 
-      {/* ── Content ─────────────────────────────────────────────────── */}
-      <main className="flex-1 max-w-4xl w-full mx-auto px-6 py-10">
-        {/* Page heading */}
-        <div className="flex items-center justify-between mb-8 animate-fade-in">
-          <div>
-            <h1 className="text-2xl font-semibold text-[var(--text)]">Your Rooms</h1>
-            <p className="text-sm text-[var(--text-2)] mt-0.5">
-              Select a room to open its canvas
-            </p>
+      <main className="flex-1 max-w-6xl w-full mx-auto px-6 py-8 sm:py-10">
+        <section
+          className="relative overflow-hidden rounded-2xl border border-[var(--border)] p-6 sm:p-7 mb-6"
+          style={{
+            background:
+              'radial-gradient(130% 120% at 8% 0%, rgba(69,117,243,0.22), rgba(12,16,32,1) 45%), radial-gradient(100% 90% at 100% 100%, rgba(139,92,246,0.18), rgba(12,16,32,0) 55%), var(--surface)',
+          }}
+        >
+          <div className="absolute -right-16 -top-20 w-56 h-56 rounded-full blur-3xl" style={{ background: 'var(--accent-glow)' }} />
+          <div className="absolute -left-12 -bottom-20 w-52 h-52 rounded-full blur-3xl" style={{ background: 'var(--violet-glow)' }} />
+
+          <div className="relative z-10 flex flex-col gap-5 sm:flex-row sm:items-end sm:justify-between">
+            <div>
+              <p className="text-[10px] uppercase tracking-[0.2em] text-[var(--text-3)] font-semibold">Workspace Insights</p>
+              <h1 className="mt-2 text-2xl sm:text-3xl font-semibold text-[var(--text)]">Command Center</h1>
+              <p className="mt-2 text-sm text-[var(--text-2)] max-w-xl">
+                Track missed room updates, assigned tasks, and delivery progress across your collaboration spaces.
+              </p>
+            </div>
+
+            <div className="grid grid-cols-3 gap-2 sm:gap-3 min-w-[280px]">
+              <StatPill label="Rooms" value={highlight.totalRooms} />
+              <StatPill label="Missed" value={highlight.missedUpdates} danger={highlight.missedUpdates > 0} />
+              <StatPill label="My Open" value={highlight.openTasks} warn={highlight.openTasks > 0} />
+            </div>
           </div>
+        </section>
+
+        <div className="flex flex-wrap items-center gap-3 mb-6">
+          <div className="flex flex-col gap-1">
+            <span className="text-[11px] font-semibold uppercase tracking-wider text-[var(--text-3)]">Select Dashboard</span>
+            <div className="inline-flex items-center rounded-xl border border-[var(--border-2)] bg-[var(--surface)] p-1.5 shadow-[0_0_0_1px_rgba(69,117,243,0.12)]">
+            <button
+              className="px-4 py-2 text-xs font-semibold rounded-lg transition-colors"
+              style={{
+                color: view === 'user' ? '#fff' : 'var(--text-3)',
+                background: view === 'user' ? 'var(--accent)' : 'transparent',
+              }}
+              onClick={() => setView('user')}
+            >
+              User Dashboard
+            </button>
+            <button
+              className="px-4 py-2 text-xs font-semibold rounded-lg transition-colors"
+              style={{
+                color: view === 'room' ? '#fff' : 'var(--text-3)',
+                background: view === 'room' ? 'var(--accent)' : 'transparent',
+              }}
+              onClick={() => setView('room')}
+            >
+              Room Dashboard
+            </button>
+          </div>
+          </div>
+
+          <div className="flex-1" />
 
           <button
             className="btn btn-primary"
@@ -144,7 +224,6 @@ export default function DashboardPage() {
           </button>
         </div>
 
-        {/* Create room modal */}
         {showCreate && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
             <div className="card w-full max-w-sm p-6 animate-fade-in shadow-2xl">
@@ -164,14 +243,7 @@ export default function DashboardPage() {
                 )}
                 <div className="flex gap-2 mt-1">
                   <button type="submit" className="btn btn-primary flex-1" disabled={creating}>
-                    {creating ? (
-                      <>
-                        <span className="w-4 h-4 rounded-full border-2 border-white/30 border-t-white animate-spin" />
-                        Creating…
-                      </>
-                    ) : (
-                      'Create'
-                    )}
+                    {creating ? 'Creating…' : 'Create'}
                   </button>
                   <button
                     type="button"
@@ -186,108 +258,254 @@ export default function DashboardPage() {
           </div>
         )}
 
-        {/* Room list */}
-        {loading ? (
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            {[1, 2, 3].map((i) => (
-              <div
-                key={i}
-                className="card h-28 animate-pulse"
-                style={{ animationDelay: `${i * 0.1}s` }}
-              />
+        {statsError && (
+          <div className="card px-4 py-3 mb-5 text-sm text-[var(--danger)]">
+            {statsError}
+          </div>
+        )}
+
+        {loadingStats || loadingRooms ? (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {[1, 2, 3, 4].map((i) => (
+              <div key={i} className="card h-32 animate-pulse" />
             ))}
           </div>
-        ) : roomList.length === 0 ? (
-          <EmptyState onCreateClick={() => setShowCreate(true)} />
+        ) : view === 'user' ? (
+          <UserDashboardView
+            summary={userSummary}
+            rows={userRooms}
+            roomList={roomList}
+          />
         ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            {roomList.map((room, i) => (
-              <RoomCard key={room.id} room={room} delay={i * 0.05} />
-            ))}
-          </div>
+          <RoomDashboardView
+            rows={roomStats}
+          />
         )}
       </main>
     </div>
   );
 }
 
-function RoomCard({ room, delay }: { room: Room; delay: number }) {
-  const memberCount = room.members?.length ?? 0;
-
+function StatPill({
+  label,
+  value,
+  danger = false,
+  warn = false,
+}: {
+  label: string;
+  value: number;
+  danger?: boolean;
+  warn?: boolean;
+}) {
   return (
-    <Link href={`/room/${room.id}`}>
-      <div
-        className="card p-5 cursor-pointer transition-all hover:border-[var(--border-2)] hover:bg-[var(--surface-2)] group animate-fade-in"
-        style={{ animationDelay: `${delay}s` }}
-      >
-        <div className="flex items-start justify-between mb-3">
-          {/* Room icon */}
-          <div
-            className="w-9 h-9 rounded-lg flex items-center justify-center text-sm font-bold text-white"
-            style={{ background: `linear-gradient(135deg, var(--accent), var(--violet))` }}
-          >
-            {room.name[0]?.toUpperCase() ?? '#'}
-          </div>
-          {/* Arrow on hover */}
-          <svg
-            className="w-4 h-4 text-[var(--text-3)] group-hover:text-[var(--accent)] transition-colors opacity-0 group-hover:opacity-100"
-            fill="none"
-            viewBox="0 0 16 16"
-          >
-            <path d="M3 8h10M9 4l4 4-4 4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-          </svg>
-        </div>
-
-        <h3 className="font-semibold text-[var(--text)] text-sm group-hover:text-white transition-colors">
-          {room.name}
-        </h3>
-
-        <div className="flex items-center justify-between mt-3">
-          {/* Member avatars */}
-          <div className="flex -space-x-1.5">
-            {(room.members ?? []).slice(0, 5).map((m) => (
-              <div
-                key={m.id}
-                className="w-5 h-5 rounded-full border border-[var(--surface)] flex items-center justify-center text-[9px] font-bold text-white"
-                style={{ background: m.color }}
-                title={m.name}
-              >
-                {m.name[0]?.toUpperCase()}
-              </div>
-            ))}
-            {memberCount > 5 && (
-              <div className="w-5 h-5 rounded-full border border-[var(--surface)] bg-[var(--surface-3)] flex items-center justify-center text-[9px] text-[var(--text-2)]">
-                +{memberCount - 5}
-              </div>
-            )}
-          </div>
-
-          <span className="text-[11px] text-[var(--text-3)]">
-            {memberCount} {memberCount === 1 ? 'member' : 'members'}
-          </span>
-        </div>
-      </div>
-    </Link>
+    <div className="rounded-xl border px-3 py-2" style={{
+      borderColor: danger ? 'rgba(242,87,87,0.45)' : warn ? 'rgba(251,191,36,0.45)' : 'var(--border)',
+      background: danger ? 'rgba(242,87,87,0.12)' : warn ? 'rgba(251,191,36,0.12)' : 'rgba(12,16,32,0.45)',
+    }}>
+      <p className="text-[10px] uppercase tracking-wider text-[var(--text-3)] font-semibold">{label}</p>
+      <p className="mt-0.5 text-base font-semibold text-[var(--text)]">{value}</p>
+    </div>
   );
 }
 
-function EmptyState({ onCreateClick }: { onCreateClick: () => void }) {
+function UserDashboardView({
+  summary,
+  rows,
+  roomList,
+}: {
+  summary: UserDashboardSummary | null;
+  rows: UserDashboardRoom[];
+  roomList: Room[];
+}) {
+  if (!summary) {
+    return <div className="card px-4 py-6 text-sm text-[var(--text-2)]">No user dashboard data yet.</div>;
+  }
+
   return (
-    <div className="flex flex-col items-center justify-center py-20 text-center animate-fade-in">
-      {/* Icon */}
-      <div className="w-16 h-16 rounded-2xl bg-[var(--surface-2)] border border-[var(--border)] flex items-center justify-center mb-4">
-        <svg width="28" height="28" viewBox="0 0 28 28" fill="none">
-          <rect x="3" y="3" width="22" height="22" rx="4" stroke="var(--text-3)" strokeWidth="1.5" />
-          <path d="M14 9v10M9 14h10" stroke="var(--accent)" strokeWidth="1.5" strokeLinecap="round" />
-        </svg>
+    <div className="space-y-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
+        <MetricCard title="Total Rooms" value={summary.total_rooms} subtitle="rooms you can access" />
+        <MetricCard title="Missed Updates" value={summary.total_missed_updates} subtitle="updates since last visit" tone="danger" />
+        <MetricCard title="Assigned Tasks" value={summary.assigned_to_me} subtitle="all assigned tasks" tone="accent" />
+        <MetricCard title="Open for You" value={summary.assigned_open_to_me} subtitle="open + in-progress" tone="warn" />
       </div>
-      <h3 className="text-base font-semibold text-[var(--text)] mb-1">No rooms yet</h3>
-      <p className="text-sm text-[var(--text-2)] max-w-xs mb-6">
-        Create your first room to start collaborating on a canvas with your team.
-      </p>
-      <button className="btn btn-primary" onClick={onCreateClick}>
-        Create a room
-      </button>
+
+      <div className="card overflow-hidden">
+        <div className="px-4 py-3 border-b border-[var(--border)] flex items-center justify-between">
+          <h2 className="text-sm font-semibold text-[var(--text)]">Room Activity Radar</h2>
+          <span className="text-[11px] text-[var(--text-3)]">sorted by missed updates</span>
+        </div>
+
+        {rows.length === 0 ? (
+          <div className="p-6 text-sm text-[var(--text-2)]">No rooms yet. Create one to start tracking activity.</div>
+        ) : (
+          <div className="divide-y divide-[var(--border)]">
+            {rows.map((row) => {
+              const room = roomList.find((r) => r.id === row.room_id);
+              const completion = row.total_tasks > 0 ? Math.round(((row.completed_tasks + row.closed_tasks) / row.total_tasks) * 100) : 0;
+              return (
+                <Link key={row.room_id} href={`/room/${row.room_id}`} className="block px-4 py-3 hover:bg-[var(--surface-2)] transition-colors">
+                  <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                    <div>
+                      <p className="text-sm font-semibold text-[var(--text)]">{row.room_name}</p>
+                      <p className="text-[11px] text-[var(--text-3)] mt-0.5">
+                        {row.member_count} members • {row.total_tasks} tasks • completion {completion}%
+                      </p>
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-2">
+                      <TinyChip label="Missed" value={row.missed_updates} tone={row.missed_updates > 0 ? 'danger' : 'neutral'} />
+                      <TinyChip label="Assigned" value={row.assigned_to_me} tone="accent" />
+                      <TinyChip label="Open" value={row.assigned_open_to_me} tone={row.assigned_open_to_me > 0 ? 'warn' : 'neutral'} />
+                      {room && (
+                        <div className="flex -space-x-1.5 ml-1">
+                          {room.members.slice(0, 3).map((member) => (
+                            <div
+                              key={member.id}
+                              className="w-5 h-5 rounded-full border border-[var(--surface)] text-[9px] text-white font-bold flex items-center justify-center"
+                              style={{ background: member.color }}
+                              title={member.name}
+                            >
+                              {member.name[0]?.toUpperCase()}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </Link>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function RoomDashboardView({ rows }: { rows: RoomDashboardRoom[] }) {
+  if (rows.length === 0) {
+    return <div className="card px-4 py-6 text-sm text-[var(--text-2)]">No room stats yet.</div>;
+  }
+
+  return (
+    <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      {rows.map((row) => (
+        <Link key={row.room_id} href={`/room/${row.room_id}`}>
+          <div className="card p-4 hover:border-[var(--border-2)] hover:bg-[var(--surface-2)] transition-colors h-full">
+            <div className="flex items-start justify-between gap-3 mb-3">
+              <div>
+                <h3 className="text-sm font-semibold text-[var(--text)]">{row.room_name}</h3>
+                <p className="text-[11px] text-[var(--text-3)] mt-0.5">{row.member_count} users</p>
+              </div>
+              <span className="text-[11px] font-semibold px-2 py-1 rounded-md" style={{
+                background: row.missed_updates > 0 ? 'rgba(251,191,36,0.16)' : 'rgba(52,211,153,0.15)',
+                color: row.missed_updates > 0 ? '#d97706' : 'var(--success)',
+              }}>
+                {row.missed_updates > 0 ? `${row.missed_updates} unread` : 'up to date'}
+              </span>
+            </div>
+
+            <div className="grid grid-cols-2 gap-2 mb-3">
+              <MiniStat label="Total Tasks" value={row.total_tasks} />
+              <MiniStat label="Completed" value={row.completed_tasks + row.closed_tasks} />
+              <MiniStat label="In Progress" value={row.inprogress_tasks} />
+              <MiniStat label="Open" value={row.open_tasks} />
+            </div>
+
+            <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)] p-2.5">
+              <div className="flex items-center justify-between mb-1.5">
+                <span className="text-[11px] text-[var(--text-3)]">Task completion</span>
+                <span className="text-[11px] font-semibold text-[var(--text)]">{row.completion_rate}%</span>
+              </div>
+              <div className="h-1.5 rounded-full bg-[var(--border)] overflow-hidden">
+                <div
+                  className="h-full rounded-full"
+                  style={{
+                    width: `${row.completion_rate}%`,
+                    background: 'linear-gradient(90deg, var(--accent), var(--success))',
+                  }}
+                />
+              </div>
+            </div>
+          </div>
+        </Link>
+      ))}
+    </div>
+  );
+}
+
+function MetricCard({
+  title,
+  value,
+  subtitle,
+  tone = 'neutral',
+}: {
+  title: string;
+  value: number;
+  subtitle: string;
+  tone?: 'neutral' | 'accent' | 'warn' | 'danger';
+}) {
+  const style = {
+    neutral: {
+      borderColor: 'var(--border)',
+      background: 'var(--surface)',
+      value: 'var(--text)',
+    },
+    accent: {
+      borderColor: 'rgba(69,117,243,0.35)',
+      background: 'rgba(69,117,243,0.12)',
+      value: 'var(--accent)',
+    },
+    warn: {
+      borderColor: 'rgba(251,191,36,0.35)',
+      background: 'rgba(251,191,36,0.12)',
+      value: '#d97706',
+    },
+    danger: {
+      borderColor: 'rgba(242,87,87,0.35)',
+      background: 'rgba(242,87,87,0.12)',
+      value: '#ef4444',
+    },
+  }[tone];
+
+  return (
+    <div className="rounded-xl border p-3" style={{ borderColor: style.borderColor, background: style.background }}>
+      <p className="text-[10px] uppercase tracking-wider text-[var(--text-3)] font-semibold">{title}</p>
+      <p className="text-2xl font-semibold mt-1" style={{ color: style.value }}>{value}</p>
+      <p className="text-[11px] text-[var(--text-3)] mt-0.5">{subtitle}</p>
+    </div>
+  );
+}
+
+function TinyChip({
+  label,
+  value,
+  tone,
+}: {
+  label: string;
+  value: number;
+  tone: 'neutral' | 'accent' | 'warn' | 'danger';
+}) {
+  const palette = {
+    neutral: { bg: 'var(--surface)', fg: 'var(--text-2)', border: 'var(--border)' },
+    accent: { bg: 'rgba(69,117,243,0.14)', fg: 'var(--accent)', border: 'rgba(69,117,243,0.28)' },
+    warn: { bg: 'rgba(251,191,36,0.16)', fg: '#d97706', border: 'rgba(251,191,36,0.28)' },
+    danger: { bg: 'rgba(242,87,87,0.14)', fg: '#ef4444', border: 'rgba(242,87,87,0.28)' },
+  }[tone];
+
+  return (
+    <span className="text-[10px] font-semibold rounded px-2 py-1 border" style={{ background: palette.bg, color: palette.fg, borderColor: palette.border }}>
+      {label}: {value}
+    </span>
+  );
+}
+
+function MiniStat({ label, value }: { label: string; value: number }) {
+  return (
+    <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)] p-2">
+      <p className="text-[10px] text-[var(--text-3)] uppercase tracking-wider">{label}</p>
+      <p className="text-sm font-semibold text-[var(--text)] mt-0.5">{value}</p>
     </div>
   );
 }
