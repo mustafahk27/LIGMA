@@ -81,6 +81,11 @@ class WsProvider {
   /** Pending flag: push our local state to server after the next binary frame */
   private pendingStatePush = false;
 
+  // Replay animation state (used when the server sends a replay envelope)
+  private replayQueue: Uint8Array[] = [];
+  private replayTimer: ReturnType<typeof setTimeout> | null = null;
+  private replayFinalSeq = 0;
+
   constructor() {
     // ── Register Yjs + awareness listeners ONCE (not per reconnect) ──────────
     // Outgoing Yjs updates
