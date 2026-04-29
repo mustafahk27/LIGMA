@@ -43,8 +43,10 @@ async function _hydrateDocFromDB(roomId: string): Promise<void> {
 
   const events = await getEventsSince(roomId, 0, 100_000);
 
+  let yjsCount = 0;
   for (const event of events) {
     if (event.event_type !== 'yjs_update') continue;
+    yjsCount++;
     const b64 = (event.payload as { update: string }).update;
     if (!b64) continue;
     const update = Uint8Array.from(Buffer.from(b64, 'base64'));
@@ -56,7 +58,8 @@ async function _hydrateDocFromDB(roomId: string): Promise<void> {
   }
 
   (room.doc as Y.Doc & { _hydrated?: boolean })._hydrated = true;
-  console.log(`[ydoc-store] Room ${roomId} hydrated with ${events.length} events`);
+  const nodesAfter = room.doc.getMap('nodes').size;
+  console.log(`[ydoc-store] Room ${roomId} hydrated: total=${events.length} yjs_updates=${yjsCount} nodes=${nodesAfter}`);
 
   // Intent updates are now persisted as yjs_update events (actor='__server__'),
   // so they are already restored by the replay loop above. No separate step needed.
