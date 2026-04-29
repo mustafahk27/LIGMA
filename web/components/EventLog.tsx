@@ -78,6 +78,7 @@ export function EventLog({ roomId, token }: EventLogProps) {
   const [clearSeq,    setClearSeq]    = useState(0);
   const [expandedId,  setExpandedId]  = useState<string | null>(null);
   const [tick,        setTick]        = useState(0);
+  const [initLoading, setInitLoading] = useState(true);
 
   const latestSeqRef = useRef(0);
   const newIds       = useRef<Set<string>>(new Set());
@@ -88,21 +89,26 @@ export function EventLog({ roomId, token }: EventLogProps) {
   // ── Init: detect missed events and queue replay ────────────────────────────
 
   useEffect(() => {
+    let cancelled = false;
+
     async function init() {
+      setInitLoading(true);
       try {
         const storedStr = typeof window !== 'undefined' ? localStorage.getItem(seqKey) : '0';
         const stored = parseInt(storedStr ?? '0', 10);
         
         const storedClearStr = typeof window !== 'undefined' ? localStorage.getItem(clearKey) : '0';
         const initialClearSeq = parseInt(storedClearStr ?? '0', 10);
-        setClearSeq(initialClearSeq);
+        if (!cancelled) setClearSeq(initialClearSeq);
 
         // Fetch up to 80 most recent events
         const data = await rooms.events(roomId, token, 0);
-        if (data.events.length === 0) return;
+        if (cancelled) return;
 
         latestSeqRef.current = data.latest_seq;
         localStorage.setItem(seqKey, String(data.latest_seq));
+
+        if (data.events.length === 0) return;
 
         if (stored > 0 && stored < data.latest_seq) {
           // Partition into seen (instant load) and missed (replay queue)
@@ -123,8 +129,14 @@ export function EventLog({ roomId, token }: EventLogProps) {
           setEvents(data.events);
         }
       } catch { /* server not ready */ }
+      finally {
+        if (!cancelled) setInitLoading(false);
+      }
     }
-    init();
+    void init();
+    return () => {
+      cancelled = true;
+    };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [roomId, token]);
 
@@ -144,10 +156,10 @@ export function EventLog({ roomId, token }: EventLogProps) {
 
   // ── Incremental fetch on remote Yjs update ─────────────────────────────────
 
-  const fetchIncremental = useCallback(async () => {
+  const fetchIncremental = useCallback(async (): Promise<boolean> => {
     try {
       const data = await rooms.events(roomId, token, latestSeqRef.current);
-      if (data.events.length === 0) return;
+      if (data.events.length === 0) return false;
       latestSeqRef.current = data.latest_seq;
       localStorage.setItem(seqKey, String(data.latest_seq));
       const freshIds = new Set(data.events.map(e => e.id));
@@ -158,16 +170,45 @@ export function EventLog({ roomId, token }: EventLogProps) {
         return [...novel, ...prev].slice(0, 300);
       });
       setLive(true);
-    } catch { /* ignore */ }
+      return true;
+    } catch {
+      return false;
+    }
   }, [roomId, token, seqKey]);
 
+  /**
+   * After Yjs applies (local or remote), poll REST for new semantic rows. Short
+   * debounce coalesces bursts; retries cover any straggling DB / network delay.
+   */
   useEffect(() => {
+    let debounceId: ReturnType<typeof setTimeout> | null = null;
+
+    async function pullAfterRemoteFlush() {
+      let got = await fetchIncremental();
+      if (!got) {
+        await new Promise((r) => setTimeout(r, 60));
+        got = await fetchIncremental();
+      }
+      if (!got) {
+        await new Promise((r) => setTimeout(r, 120));
+        await fetchIncremental();
+      }
+    }
+
     function onUpdate(_u: Uint8Array, origin: unknown) {
-      if (origin !== 'remote') return;
-      fetchIncremental();
+      // Peers receive 'remote'; the editor does not (server skips echo), so also react to 'local'.
+      if (origin !== 'remote' && origin !== 'local') return;
+      if (debounceId !== null) clearTimeout(debounceId);
+      debounceId = setTimeout(() => {
+        debounceId = null;
+        void pullAfterRemoteFlush();
+      }, 40);
     }
     ydoc.on('update', onUpdate);
-    return () => ydoc.off('update', onUpdate);
+    return () => {
+      if (debounceId !== null) clearTimeout(debounceId);
+      ydoc.off('update', onUpdate);
+    };
   }, [fetchIncremental]);
 
   // ── Timestamp ticker ───────────────────────────────────────────────────────
@@ -198,10 +239,10 @@ export function EventLog({ roomId, token }: EventLogProps) {
   // ── Render ─────────────────────────────────────────────────────────────────
 
   return (
-    <div className="flex flex-col flex-1 overflow-hidden">
+    <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
 
       {/* Replay banner */}
-      {isReplaying && (
+      {!initLoading && isReplaying && (
         <div
           className="flex-shrink-0 px-3 py-2.5 border-b border-[var(--border)]"
           style={{ background: 'rgba(69,117,243,0.08)' }}
@@ -236,41 +277,62 @@ export function EventLog({ roomId, token }: EventLogProps) {
         </div>
       )}
 
-      {/* Header bar */}
-      <div className="flex items-center gap-2 px-3 py-2 border-b border-[var(--border)] flex-shrink-0">
-        <span className="relative flex h-2 w-2 flex-shrink-0">
-          {live && !isReplaying && (
-            <span className="animate-ping absolute inline-flex h-full w-full rounded-full opacity-75"
-              style={{ background: 'var(--success)' }} />
+      {/* Header bar — hidden while initial fetch runs */}
+      {!initLoading && (
+      <div className="flex flex-shrink-0 items-center gap-2 border-b border-[var(--border)] px-3 py-2">
+          <span className="relative flex h-2 w-2 flex-shrink-0">
+            {live && !isReplaying && (
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full opacity-75"
+                style={{ background: 'var(--success)' }} />
+            )}
+            <span className="relative inline-flex rounded-full h-2 w-2"
+              style={{ background: isReplaying ? 'var(--accent)' : live ? 'var(--success)' : 'var(--border-2)' }} />
+          </span>
+          <span className="text-[10px] font-semibold text-[var(--text-3)] uppercase tracking-wider">
+            {isReplaying ? 'Replaying…' : live ? 'Live' : 'Connecting…'}
+          </span>
+          <span className="ml-auto text-[10px] text-[var(--text-3)]">
+            {visible.length > 0 ? `${visible.length}` : ''}
+          </span>
+          {visible.length > 0 && !isReplaying && (
+            <button
+              onClick={handleClear}
+              title="Clear screen — new events still appear"
+              style={{
+                color: 'var(--text-3)', border: '1px solid var(--border)',
+                background: 'transparent', cursor: 'pointer',
+                fontSize: '9px', fontWeight: 600, textTransform: 'uppercase',
+                letterSpacing: '0.05em', padding: '2px 6px', borderRadius: '4px',
+              }}
+            >
+              Clear
+            </button>
           )}
-          <span className="relative inline-flex rounded-full h-2 w-2"
-            style={{ background: isReplaying ? 'var(--accent)' : live ? 'var(--success)' : 'var(--border-2)' }} />
-        </span>
-        <span className="text-[10px] font-semibold text-[var(--text-3)] uppercase tracking-wider">
-          {isReplaying ? 'Replaying…' : live ? 'Live' : 'Connecting…'}
-        </span>
-        <span className="ml-auto text-[10px] text-[var(--text-3)]">
-          {visible.length > 0 ? `${visible.length}` : ''}
-        </span>
-        {visible.length > 0 && !isReplaying && (
-          <button
-            onClick={handleClear}
-            title="Clear screen — new events still appear"
-            style={{
-              color: 'var(--text-3)', border: '1px solid var(--border)',
-              background: 'transparent', cursor: 'pointer',
-              fontSize: '9px', fontWeight: 600, textTransform: 'uppercase',
-              letterSpacing: '0.05em', padding: '2px 6px', borderRadius: '4px',
-            }}
-          >
-            Clear
-          </button>
-        )}
       </div>
+      )}
 
       {/* Event stream */}
-      <div className="flex-1 overflow-y-auto">
-        {visible.length === 0 && !isReplaying ? (
+      <div
+        className={
+          initLoading
+            ? 'flex min-h-0 flex-1 flex-col items-center justify-center gap-3 px-4'
+            : 'min-h-0 flex-1 overflow-y-auto'
+        }
+        role={initLoading ? 'status' : undefined}
+        aria-label={initLoading ? 'Fetching room activity' : undefined}
+      >
+        {initLoading ? (
+          <>
+            <div
+              className="h-8 w-8 shrink-0 rounded-full border-2 border-[var(--border)] border-t-[var(--accent)] animate-spin"
+              style={{ animationDuration: '0.7s' }}
+              aria-hidden
+            />
+            <p className="max-w-[200px] text-center text-[10px] leading-relaxed text-[var(--text-3)]">
+              Fetching room activity…
+            </p>
+          </>
+        ) : visible.length === 0 && !isReplaying ? (
           <EmptyState cleared={clearSeq > 0} />
         ) : (
           <div className="flex flex-col">

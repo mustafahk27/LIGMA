@@ -50,10 +50,16 @@ async function flushBuffer(): Promise<void> {
     return `($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4})`;
   });
 
-  await query(
-    `INSERT INTO events (room_id, actor_id, event_type, payload) VALUES ${placeholders.join(', ')}`,
-    values
-  );
+  try {
+    await query(
+      `INSERT INTO events (room_id, actor_id, event_type, payload) VALUES ${placeholders.join(', ')}`,
+      values
+    );
+  } catch (err) {
+    console.error('[event-log] flushBuffer failed, requeueing batch:', err);
+    // Put items back so they're retried on the next flush
+    writeBuffer.unshift(...batch);
+  }
 }
 
 export function appendEvent(
@@ -63,7 +69,18 @@ export function appendEvent(
   payload: Record<string, unknown>
 ): void {
   writeBuffer.push({ room_id, actor_id, event_type, payload });
-  scheduleFlush();
+  // Sidebar / API only reads semantic rows. Flush those immediately so clients
+  // don't wait on the yjs_update batch delay (~200ms). Pending yjs rows in the
+  // same buffer are included in this flush.
+  if (event_type === 'yjs_update') {
+    scheduleFlush();
+  } else {
+    if (flushTimer !== null) {
+      clearTimeout(flushTimer);
+      flushTimer = null;
+    }
+    void flushBuffer();
+  }
 }
 
 /**
