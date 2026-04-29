@@ -8,6 +8,7 @@ import { canActOnNode } from '@/lib/node-types';
 import { updateNode } from '@/lib/nodes';
 import { nodeLocalContentBounds } from '@/lib/selection-bounds';
 import { dimHex, konvaFontStyle } from '@/lib/text-style';
+import type { Tool } from '@/store/ui';
 
 interface ShapeRendererProps {
   node: NodeSnapshot;
@@ -19,7 +20,9 @@ interface ShapeRendererProps {
   isTransforming: boolean;
   setGroupRef: (id: string, node: Konva.Group | null) => void;
   role: Role;
+  tool: Tool;
   onSelect: (id: string) => void;
+  onErase: (id: string) => void;
   onDoubleClick: (id: string) => void;
   onDragStart: (id: string) => void;
   /** Called while dragging (template groups move siblings together via Canvas). */
@@ -40,7 +43,9 @@ export function ShapeRenderer({
   isTransforming,
   setGroupRef,
   role,
+  tool,
   onSelect,
+  onErase,
   onDoubleClick,
   onDragStart,
   onDragMove,
@@ -71,11 +76,26 @@ export function ShapeRenderer({
       onDragEnd={handleDragEnd}
       onMouseDown={(e) => {
         e.cancelBubble = true;
+        if (tool === 'erase') {
+          if (writable) onErase(node.id);
+          return;
+        }
         onSelect(node.id);
       }}
       onTap={(e) => {
         e.cancelBubble = true;
+        if (tool === 'erase') {
+          if (writable) onErase(node.id);
+          return;
+        }
         onSelect(node.id);
+      }}
+      onMouseEnter={(e) => {
+        if (tool !== 'erase' || !writable) return;
+        if ((e.evt.buttons & 1) === 1) {
+          e.cancelBubble = true;
+          onErase(node.id);
+        }
       }}
       onDblClick={(e) => {
         e.cancelBubble = true;

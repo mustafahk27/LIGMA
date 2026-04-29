@@ -55,8 +55,17 @@ export const awareness = new awarenessProtocol.Awareness(ydoc);
 type ServerMessage =
   | { type: 'init'; seq: number }
   | { type: 'synced'; seq: number }
+  | { type: 'replay'; baseState?: string; updates: string[]; finalSeq: number }
   | { type: 'awareness'; data: number[] }
   | { type: 'rejected'; reason: string; nodeId?: string };
+
+/** Pace replay so total visual duration is bounded — short for many, longer for a handful. */
+function replayInterval(total: number): number {
+  if (total > 40) return 110;
+  if (total > 20) return 180;
+  if (total > 10) return 260;
+  return 360;
+}
 
 // ─── Provider class ───────────────────────────────────────────────────────────
 
@@ -138,6 +147,7 @@ class WsProvider {
   destroy(): void {
     this.destroyed = true;
     this.clearRetryTimer();
+    this.cancelReplay();
     this.detachSocket();
   }
 
@@ -162,11 +172,19 @@ class WsProvider {
   private openSocket(): void {
     if (this.destroyed) return;
 
+    this.cancelReplay();
     this.detachSocket();
 
     const base = getWsBaseUrl();
     const q = encodeURIComponent(this.token);
-    const url = `${base}/ws/${this.roomId}?token=${q}`;
+    // If we have a stored seq (from any prior session OR an active reconnect),
+    // pass it so the server sends a step-by-step replay envelope instead of an
+    // instant full-state snap. The envelope includes a `baseState` so even an
+    // empty client ydoc (page refresh) catches up before the animation runs.
+    const seq = this.storedLastSeq;
+    const url = seq > 0
+      ? `${base}/ws/${this.roomId}?token=${q}&lastSeq=${seq}`
+      : `${base}/ws/${this.roomId}?token=${q}`;
     useWsStore.getState().setStatus('reconnecting');
 
     let ws: WebSocket;
@@ -186,11 +204,12 @@ class WsProvider {
       useWsStore.getState().setStatus('connected');
       this.retryCount = 0;
 
-      // If we already went through initial sync before, reconnect with diff replay
-      if (this.initialised && this.storedLastSeq > 0) {
+      // If we passed ?lastSeq=N on the URL the server is waiting for sync —
+      // ask it for the replay envelope. Otherwise it's a fresh first connect
+      // and the server is already sending init + full state automatically.
+      if (this.storedLastSeq > 0) {
         this.sendSyncRequest();
       }
-      // Otherwise the server will send { type: 'init' } + binary state automatically
 
       // Re-broadcast the current local awareness so peers can render our cursor
       // immediately. The 'update' listener only fires on changes — without this,
@@ -283,6 +302,16 @@ class WsProvider {
         break;
       }
 
+      case 'replay': {
+        // Server sent a step-by-step replay envelope for offline catchup.
+        // baseState (if present) brings the local ydoc to the state at our
+        // lastSeq instantly — needed for tab refreshes where ydoc starts empty.
+        // Then each missed Yjs update is applied with a small delay so the
+        // canvas evolves visibly instead of snapping to the latest state.
+        this.startReplay(msg.baseState, msg.updates, msg.finalSeq);
+        break;
+      }
+
       case 'awareness': {
         const update = new Uint8Array(msg.data);
         awarenessProtocol.applyAwarenessUpdate(awareness, update, 'remote');
@@ -306,6 +335,112 @@ class WsProvider {
       default: {
         console.warn('[ws-provider] Unknown server message:', msg);
       }
+    }
+  }
+
+  // ── Canvas replay (offline catchup) ─────────────────────────────────────────
+
+  private startReplay(baseStateB64: string | undefined, updatesB64: string[], finalSeq: number): void {
+    this.cancelReplay();
+
+    // 1. Apply the base state (state at lastSeq) instantly so a fresh ydoc
+    //    has the pre-disconnect snapshot to animate on top of. Yjs is
+    //    idempotent, so this is a no-op for live reconnects already in sync.
+    if (baseStateB64) {
+      try {
+        const bin = atob(baseStateB64);
+        if (bin.length > 0) {
+          const arr = new Uint8Array(bin.length);
+          for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+          Y.applyUpdate(ydoc, arr, 'remote');
+        }
+      } catch (err) {
+        console.warn('[ws-provider] Replay base state apply failed:', err);
+      }
+    }
+
+    // 2. Decode the per-update replay queue.
+    const decoded: Uint8Array[] = [];
+    for (const b64 of updatesB64) {
+      try {
+        const bin = atob(b64);
+        const arr = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+        decoded.push(arr);
+      } catch (err) {
+        console.warn('[ws-provider] Skipping malformed replay update:', err);
+      }
+    }
+
+    useWsStore.getState().setStatus('connected');
+
+    if (decoded.length === 0) {
+      // Nothing to animate — base state already brought us up to date.
+      this.storedLastSeq = finalSeq;
+      return;
+    }
+
+    this.replayQueue = decoded;
+    this.replayFinalSeq = finalSeq;
+    useWsStore.getState().setReplay({
+      active: true,
+      total: decoded.length,
+      done: 0,
+    });
+    this.scheduleReplayTick();
+  }
+
+  private scheduleReplayTick(): void {
+    if (this.replayTimer !== null) return;
+    if (this.replayQueue.length === 0) {
+      this.finishReplay();
+      return;
+    }
+    const total = useWsStore.getState().replay.total;
+    const delay = replayInterval(total);
+    this.replayTimer = setTimeout(() => {
+      this.replayTimer = null;
+      const next = this.replayQueue.shift();
+      if (!next) {
+        this.finishReplay();
+        return;
+      }
+      try {
+        Y.applyUpdate(ydoc, next, 'remote');
+      } catch (err) {
+        console.warn('[ws-provider] Replay update apply failed:', err);
+      }
+      const state = useWsStore.getState().replay;
+      useWsStore.getState().setReplay({
+        active: this.replayQueue.length > 0,
+        total: state.total,
+        done: state.done + 1,
+      });
+      if (this.replayQueue.length > 0) {
+        this.scheduleReplayTick();
+      } else {
+        this.finishReplay();
+      }
+    }, delay);
+  }
+
+  private finishReplay(): void {
+    if (this.replayFinalSeq > 0) {
+      this.storedLastSeq = this.replayFinalSeq;
+      this.replayFinalSeq = 0;
+    }
+    useWsStore.getState().setReplay({ active: false, total: 0, done: 0 });
+  }
+
+  private cancelReplay(): void {
+    if (this.replayTimer !== null) {
+      clearTimeout(this.replayTimer);
+      this.replayTimer = null;
+    }
+    this.replayQueue = [];
+    this.replayFinalSeq = 0;
+    if (useWsStore.getState().replay.active) {
+      useWsStore.getState().setReplay({ active: false, total: 0, done: 0 });
     }
   }
 

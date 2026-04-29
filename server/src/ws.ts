@@ -3,12 +3,13 @@ import type { Duplex } from 'stream';
 import { WebSocket, WebSocketServer } from 'ws';
 import { query } from './db.js';
 import type { AuthUser } from './middleware/auth.js';
-import { joinRoom, leaveRoom, broadcastJsonToRoom, roomSize, getClientRole } from './rooms.js';
+import { joinRoom, leaveRoom, broadcastJsonToRoom, roomSize, getClientRole, getRoomDoc } from './rooms.js';
 import type { Role } from './rbac.js';
 import { hydrateDocFromDB, applyAndBroadcast } from './ydoc-store.js';
 import { sendFullState, replayMissedEvents } from './sync.js';
 import type { SyncRequest } from './sync.js';
 import { randomUUID } from 'crypto';
+import * as awarenessProtocol from 'y-protocols/awareness';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -16,6 +17,66 @@ import { randomUUID } from 'crypto';
 type ClientJsonMessage =
   | { type: 'sync'; lastSeq: number; stateVector: number[] }
   | { type: 'awareness'; data: number[] };
+
+// ─── Awareness relay state (room presence) ──────────────────────────────────
+
+const roomAwareness = new Map<string, awarenessProtocol.Awareness>();
+const connectionAwarenessIds = new Map<string, Set<number>>();
+
+function awarenessKey(roomId: string, clientId: string): string {
+  return `${roomId}:${clientId}`;
+}
+
+function getRoomAwareness(roomId: string): awarenessProtocol.Awareness {
+  const existing = roomAwareness.get(roomId);
+  if (existing) return existing;
+  const doc = getRoomDoc(roomId);
+  if (!doc) {
+    throw new Error(`Missing room doc for awareness relay: ${roomId}`);
+  }
+  const created = new awarenessProtocol.Awareness(doc);
+  roomAwareness.set(roomId, created);
+  return created;
+}
+
+function trackConnectionAwareness(
+  roomId: string,
+  clientId: string,
+  changes: { added: number[]; updated: number[]; removed: number[] },
+): void {
+  const key = awarenessKey(roomId, clientId);
+  const known = connectionAwarenessIds.get(key) ?? new Set<number>();
+  for (const id of changes.added) known.add(id);
+  for (const id of changes.updated) known.add(id);
+  for (const id of changes.removed) known.delete(id);
+
+  if (known.size > 0) {
+    connectionAwarenessIds.set(key, known);
+  } else {
+    connectionAwarenessIds.delete(key);
+  }
+}
+
+function removeConnectionAwareness(roomId: string, clientId: string): void {
+  const key = awarenessKey(roomId, clientId);
+  const known = connectionAwarenessIds.get(key);
+  if (!known || known.size === 0) {
+    connectionAwarenessIds.delete(key);
+    return;
+  }
+
+  const aw = getRoomAwareness(roomId);
+  const ids = [...known];
+
+  awarenessProtocol.removeAwarenessStates(aw, ids, clientId);
+  const encoded = awarenessProtocol.encodeAwarenessUpdate(aw, ids);
+  broadcastJsonToRoom(roomId, clientId, {
+    type: 'awareness',
+    data: Array.from(encoded),
+  });
+
+  connectionAwarenessIds.delete(key);
+}
 
 // ─── Auth helpers ─────────────────────────────────────────────────────────────
 
@@ -99,7 +160,28 @@ function handleConnection(
       }
 
       case 'awareness': {
-        // Cursor / presence update — relay to all other room members (don't store)
+        // Cursor / presence update — relay to all other room members.
+        // We also track awareness client IDs per websocket so disconnects can
+        // broadcast immediate removal (instead of waiting for timeout expiry).
+        const aw = getRoomAwareness(roomId);
+        const update = new Uint8Array(msg.data);
+        let ownChanges: { added: number[]; updated: number[]; removed: number[] } = {
+          added: [],
+          updated: [],
+          removed: [],
+        };
+        const onUpdate = (
+          changes: { added: number[]; updated: number[]; removed: number[] },
+          origin: unknown,
+        ) => {
+          if (origin !== clientId) return;
+          ownChanges = changes;
+        };
+        aw.on('update', onUpdate);
+        awarenessProtocol.applyAwarenessUpdate(aw, update, clientId);
+        aw.off('update', onUpdate);
+        trackConnectionAwareness(roomId, clientId, ownChanges);
+
         broadcastJsonToRoom(roomId, clientId, {
           type: 'awareness',
           data: msg.data,
@@ -114,6 +196,7 @@ function handleConnection(
   });
 
   ws.on('close', (code, reason) => {
+    removeConnectionAwareness(roomId, clientId);
     leaveRoom(roomId, clientId);
     console.log(
       `[ws] ${user.name} (${clientId}) left room ${roomId} ` +
@@ -123,6 +206,7 @@ function handleConnection(
 
   ws.on('error', (err) => {
     console.error(`[ws] Error on ${clientId}:`, err);
+    removeConnectionAwareness(roomId, clientId);
     leaveRoom(roomId, clientId);
   });
 }
@@ -161,6 +245,8 @@ export function createUpgradeHandler(wss: WebSocketServer) {
     // ── Parse ?token= from query string ──────────────────────────────────
     const qs = new URLSearchParams(rawQuery ?? '');
     const token = qs.get('token');
+    const lastSeqParam = parseInt(qs.get('lastSeq') ?? '0', 10);
+    const isReconnect = Number.isFinite(lastSeqParam) && lastSeqParam > 0;
 
     if (!token) {
       console.warn('[ws] upgrade rejected: missing ?token=');
@@ -223,8 +309,12 @@ export function createUpgradeHandler(wss: WebSocketServer) {
       // Register the client BEFORE sending state so broadcastToRoom works
       joinRoom(roomId, clientId, ws, user!, clientRole);
 
-      // Send full state (two frames: JSON control + binary state blob)
-      void sendFullState(ws, roomId);
+      // Fresh connection: send full state immediately (init + binary).
+      // Reconnect: skip auto state — client will send `sync` and we'll respond
+      // with a step-by-step replay envelope so the canvas can animate it.
+      if (!isReconnect) {
+        void sendFullState(ws, roomId);
+      }
 
       // Start the per-connection message loop
       handleConnection(ws, roomId, clientId, user!, clientRole);

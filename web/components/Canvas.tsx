@@ -15,6 +15,8 @@ import { ShapeRenderer } from './ShapeRenderer';
 import { NodeFormatBar } from './NodeFormatBar';
 import { SelectionLayerBar } from './SelectionLayerBar';
 import { TemplateMenu } from './TemplateMenu';
+import { Minimap } from './Minimap';
+import { startHeatmapTracking, stopHeatmapTracking, trackActivity } from '@/lib/heatmap';
 import {
   appendPenPoints,
   createNode,
@@ -118,6 +120,8 @@ export default function Canvas({ userId, role, onStageReady }: CanvasProps) {
   const setEditing = useUiStore((s) => s.setEditing);
   const stickyDraftFill = useUiStore((s) => s.stickyDraftFill);
   const setTool = useUiStore((s) => s.setTool);
+  const heatmapVisible = useUiStore((s) => s.heatmapVisible);
+  const heatmapFilter = useUiStore((s) => s.heatmapFilter);
 
   const nodes = useYjsNodes();
 
@@ -129,6 +133,32 @@ export default function Canvas({ userId, role, onStageReady }: CanvasProps) {
     start: Record<string, { x: number; y: number }>;
   } | null>(null);
   const [isTransforming, setIsTransforming] = useState(false);
+
+  useEffect(() => {
+    startHeatmapTracking(userId);
+    return () => stopHeatmapTracking();
+  }, [userId]);
+
+  const eraseNodeOrGroup = useCallback(
+    (id: string) => {
+      const node = nodes.find((n) => n.id === id);
+      if (!node || !canActOnNode(role, node.acl)) return;
+
+      const toRemove =
+        node.group_id && node.group_id.length > 0
+          ? nodes.filter((n) => n.group_id === node.group_id && canActOnNode(role, n.acl))
+          : [node];
+
+      if (toRemove.length === 0) return;
+
+      toRemove.forEach((n) => deleteNode(n.id));
+      if (selectedNodeId && toRemove.some((n) => n.id === selectedNodeId)) {
+        setSelected(null);
+        setEditing(null);
+      }
+    },
+    [nodes, role, selectedNodeId, setEditing, setSelected],
+  );
 
   const setGroupRef = useCallback((id: string, nodeEl: Konva.Group | null) => {
     const m = groupRefs.current;
@@ -166,6 +196,7 @@ export default function Canvas({ userId, role, onStageReady }: CanvasProps) {
       const s = st.start[nid];
       if (g && s) g.position({ x: s.x + dx, y: s.y + dy });
     }
+    trackActivity(x, y, 2);
   }, [nodes]);
 
   const handleShapeDragEnd = useCallback(
@@ -311,15 +342,7 @@ export default function Canvas({ userId, role, onStageReady }: CanvasProps) {
         return;
       }
       if ((e.key === 'Delete' || e.key === 'Backspace') && selectedNodeId) {
-        const node = nodes.find((n) => n.id === selectedNodeId);
-        if (node && canActOnNode(role, node.acl)) {
-          const toRemove =
-            node.group_id && node.group_id.length > 0
-              ? nodes.filter((n) => n.group_id === node.group_id && canActOnNode(role, n.acl))
-              : [node];
-          toRemove.forEach((n) => deleteNode(n.id));
-          setSelected(null);
-        }
+        eraseNodeOrGroup(selectedNodeId);
       }
       if (e.key === 'Escape') {
         setSelected(null);
@@ -328,7 +351,7 @@ export default function Canvas({ userId, role, onStageReady }: CanvasProps) {
     }
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [selectedNodeId, nodes, role, setSelected, setEditing, userId]);
+  }, [selectedNodeId, nodes, role, setSelected, setEditing, userId, eraseNodeOrGroup]);
 
   /* ── Coordinate helpers ─────────────────────────────────────────────── */
   /** Convert a pointer position (in screen coords) to stage (canvas) coords. */
@@ -387,6 +410,7 @@ export default function Canvas({ userId, role, onStageReady }: CanvasProps) {
 
     const pos = toStageCoords(e.clientX, e.clientY);
     setLocalCursor(pos.x, pos.y);
+    trackActivity(pos.x, pos.y, 1);
 
     handleCreationDrag(pos);
   }
@@ -407,10 +431,15 @@ export default function Canvas({ userId, role, onStageReady }: CanvasProps) {
     if (role === 'viewer') return;
 
     const pos = toStageCoords(e.evt.clientX, e.evt.clientY);
+    trackActivity(pos.x, pos.y, 5);
 
     if (tool === 'select') {
       setSelected(null);
       setEditing(null);
+      return;
+    }
+
+    if (tool === 'erase') {
       return;
     }
 
@@ -523,6 +552,11 @@ export default function Canvas({ userId, role, onStageReady }: CanvasProps) {
   function onStageDragMove(e: Konva.KonvaEventObject<DragEvent>) {
     if (e.target !== stageRef.current) return;
     setStage({ x: e.target.x(), y: e.target.y() });
+    const pos = stageRef.current.getPointerPosition();
+    if (pos) {
+      const stageCoords = toStageCoords(pos.x, pos.y);
+      trackActivity(stageCoords.x, stageCoords.y, 2);
+    }
   }
 
   /* ── Render helpers ─────────────────────────────────────────────────── */
@@ -567,7 +601,7 @@ export default function Canvas({ userId, role, onStageReady }: CanvasProps) {
         onMouseDown={handleStageMouseDown}
         onDragMove={onStageDragMove}
         style={{
-          cursor: stageDraggable ? 'grab' : 'crosshair',
+          cursor: stageDraggable ? 'grab' : tool === 'erase' ? 'cell' : 'crosshair',
         }}
       >
         <Layer>
@@ -581,7 +615,9 @@ export default function Canvas({ userId, role, onStageReady }: CanvasProps) {
               isTransforming={isTransforming}
               setGroupRef={setGroupRef}
               role={role}
+              tool={tool}
               onSelect={(id) => setSelected(id)}
+              onErase={eraseNodeOrGroup}
               onDoubleClick={(id) => setEditing(id)}
               onDragStart={handleShapeDragStart}
               onDragMove={handleShapeDragMove}
@@ -641,6 +677,13 @@ export default function Canvas({ userId, role, onStageReady }: CanvasProps) {
         <NodeFormatBar node={selectedNode ?? null} role={role} />
       </div>
 
+      {/* Minimap Overlay */}
+      <Minimap 
+        visible={heatmapVisible} 
+        filter={heatmapFilter} 
+        onJump={(x, y) => setStage({ x: -x * stageScale + size.w / 2, y: -y * stageScale + size.h / 2 })}
+      />
+
       {/* Cursor overlay (HTML on top of Konva) */}
       <Cursors stagePos={stagePos} stageScale={stageScale} />
 
@@ -680,6 +723,7 @@ function EmptyHint({ tool }: { tool: Tool }) {
     pen: 'Click and drag to draw freehand',
     line: 'Click and drag for a straight line',
     arrow: 'Click and drag for an arrow',
+    erase: 'Click or drag across shapes to erase',
   };
   return (
     <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none select-none">

@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import type { Role } from '@/lib/node-types';
+import type { HeatmapFilter } from '@/lib/heatmap';
 import { STICKY_PALETTE } from '@/lib/node-types';
 
 export type Tool =
@@ -11,7 +12,8 @@ export type Tool =
   | 'circle'
   | 'pen'
   | 'line'
-  | 'arrow';
+  | 'arrow'
+  | 'erase';
 
 interface UiStore {
   // ── Tool / selection ─────────────────────────────────────────────────────
@@ -34,6 +36,12 @@ interface UiStore {
   // ── Identity (used by awareness + RBAC checks on the client) ─────────────
   role: Role;
   setRole: (role: Role) => void;
+
+  // ── Heatmap ──────────────────────────────────────────────────────────────
+  heatmapVisible: boolean;
+  heatmapFilter: HeatmapFilter;
+  setHeatmapVisible: (v: boolean) => void;
+  setHeatmapFilter: (f: HeatmapFilter) => void;
 }
 
 export const useUiStore = create<UiStore>((set) => ({
@@ -57,4 +65,9 @@ export const useUiStore = create<UiStore>((set) => ({
 
   role: 'viewer',
   setRole: (role) => set({ role }),
+
+  heatmapVisible: false,
+  heatmapFilter: 'all',
+  setHeatmapVisible: (heatmapVisible) => set({ heatmapVisible }),
+  setHeatmapFilter: (heatmapFilter) => set({ heatmapFilter }),
 }));

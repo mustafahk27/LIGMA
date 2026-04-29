@@ -148,7 +148,13 @@ export function EventLog({ roomId, token }: EventLogProps) {
     const id = setTimeout(() => {
       const [next, ...rest] = replayQueue;
       newIds.current = new Set([next.id]);
-      setEvents(prev => [next, ...prev].slice(0, 300));
+      setEvents(prev => {
+        // Dedup — fetchIncremental can race with the replay tick when ydoc
+        // updates fire from the canvas-replay flow, and React refuses to render
+        // two children with the same key.
+        if (prev.some(e => e.id === next.id)) return prev;
+        return [next, ...prev].slice(0, 300);
+      });
       setReplayQueue(rest);
     }, delay);
     return () => clearTimeout(id);

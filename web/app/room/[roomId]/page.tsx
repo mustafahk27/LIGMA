@@ -12,6 +12,7 @@ import { useWsStore } from '@/store/ws';
 import { rooms } from '@/lib/api';
 import type { Room } from '@/lib/api';
 import { ConnectionStatus } from '@/components/ConnectionStatus';
+import { CanvasReplayOverlay } from '@/components/CanvasReplayOverlay';
 import { TaskBoard } from '@/components/TaskBoard';
 import { EventLog } from '@/components/EventLog';
 import type { TaskItem } from '@/components/TaskBoard';
@@ -19,6 +20,14 @@ import { useWsProvider } from '@/lib/ws-provider';
 import { setLocalIdentity, clearLocalAwareness } from '@/lib/awareness-identity';
 import { useOnlineMembers } from '@/lib/use-online-members';
 import type { Role } from '@/lib/node-types';
+import { useYjsNodes } from '@/lib/use-yjs-nodes';
+import {
+  clearCanvasHistory,
+  canRedoCanvas,
+  canUndoCanvas,
+  redoCanvas,
+  undoCanvas,
+} from '@/lib/history';
 
 /* Konva needs `window` — defer the entire Canvas to client-only */
 const Canvas = dynamic(() => import('@/components/Canvas'), {
@@ -110,9 +119,24 @@ const TOOLS: { id: Tool; label: string; icon: React.ReactNode }[] = [
       </svg>
     ),
   },
+  {
+    id: 'erase',
+    label: 'Eraser (E)',
+    icon: (
+      <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+        <path
+          d="M3 9l3.9-3.9a1.8 1.8 0 012.6 0l1.4 1.4a1.8 1.8 0 010 2.6L8 12H5.2L3 9z"
+          stroke="currentColor"
+          strokeWidth="1.3"
+          strokeLinejoin="round"
+        />
+        <path d="M8.2 12H12" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
+      </svg>
+    ),
+  },
 ];
 
-const DEMO_TASKS: TaskItem[] = [];
+
 
 export default function RoomPage() {
   const router = useRouter();
@@ -130,6 +154,11 @@ export default function RoomPage() {
   const setTool = useUiStore((s) => s.setTool);
   const setRole = useUiStore((s) => s.setRole);
 
+  const heatmapVisible = useUiStore((s) => s.heatmapVisible);
+  const heatmapFilter = useUiStore((s) => s.heatmapFilter);
+  const setHeatmapVisible = useUiStore((s) => s.setHeatmapVisible);
+  const setHeatmapFilter = useUiStore((s) => s.setHeatmapFilter);
+
   const [room, setRoom] = useState<Room | null>(null);
   const [loadingRoom, setLoadingRoom] = useState(true);
   const [showInviteModal, setShowInviteModal] = useState(false);
@@ -140,6 +169,28 @@ export default function RoomPage() {
   const [rejection, setRejection] = useState<string | null>(null);
   const [sidebarTab, setSidebarTab] = useState<'events' | 'tasks'>('events');
   const stageRef = useRef<Konva.Stage | null>(null);
+
+  const nodes = useYjsNodes();
+
+  const tasks = useMemo(() => {
+    const allTasks: TaskItem[] = [];
+    for (const node of nodes) {
+      if (node.todos && Array.isArray(node.todos)) {
+        for (const todo of node.todos) {
+          allTasks.push({
+            id: todo.id,
+            text: todo.text,
+            status: todo.status,
+            authorName: room?.members?.find((m) => m.id === node.author_id)?.name || 'Unknown',
+            authorColor: room?.members?.find((m) => m.id === node.author_id)?.color || '#ccc',
+            createdAt: new Date(node.created_at).toISOString(),
+            nodeId: node.id,
+          });
+        }
+      }
+    }
+    return allTasks.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  }, [nodes, room]);
 
   /* ── Auth bootstrap ─────────────────────────────────────────────────── */
   useEffect(() => {
@@ -210,6 +261,7 @@ export default function RoomPage() {
       l: 'line',
       a: 'arrow',
       p: 'pen',
+      e: 'erase',
     };
     function onKey(e: KeyboardEvent) {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
@@ -219,6 +271,42 @@ export default function RoomPage() {
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [setTool]);
+
+  useEffect(() => {
+    clearCanvasHistory();
+  }, [roomId]);
+
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (myRole === 'viewer') return;
+      if (!(e.ctrlKey || e.metaKey)) return;
+
+      const key = e.key.toLowerCase();
+      const isUndo = key === 'z' && !e.shiftKey;
+      const isRedo = key === 'y' || (key === 'z' && e.shiftKey);
+
+      if (!isUndo && !isRedo) return;
+
+      const target = e.target as HTMLElement | null;
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) {
+        return;
+      }
+
+      if (isUndo && canUndoCanvas()) {
+        e.preventDefault();
+        undoCanvas();
+        return;
+      }
+
+      if (isRedo && canRedoCanvas()) {
+        e.preventDefault();
+        redoCanvas();
+      }
+    }
+
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [myRole]);
 
   async function loadRoom() {
     if (!token || !roomId) return;
@@ -309,7 +397,66 @@ export default function RoomPage() {
           ))}
         </div>
 
+        <div className="flex items-center gap-1 p-1 rounded-lg bg-[var(--surface)] border border-[var(--border)]">
+          <button
+            type="button"
+            title="Undo (Ctrl/Cmd+Z)"
+            onClick={() => undoCanvas()}
+            disabled={myRole === 'viewer' || !canUndoCanvas()}
+            className="h-7 w-7 flex items-center justify-center rounded-md transition-all disabled:cursor-not-allowed"
+            style={{
+              color: 'var(--text-3)',
+              opacity: myRole === 'viewer' || !canUndoCanvas() ? 0.4 : 1,
+            }}
+          >
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden>
+              <path d="M5 4L2 7l3 3" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
+              <path d="M3 7h5a3 3 0 110 6H6" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
+            </svg>
+          </button>
+          <button
+            type="button"
+            title="Redo (Ctrl/Cmd+Y or Ctrl/Cmd+Shift+Z)"
+            onClick={() => redoCanvas()}
+            disabled={myRole === 'viewer' || !canRedoCanvas()}
+            className="h-7 w-7 flex items-center justify-center rounded-md transition-all disabled:cursor-not-allowed"
+            style={{
+              color: 'var(--text-3)',
+              opacity: myRole === 'viewer' || !canRedoCanvas() ? 0.4 : 1,
+            }}
+          >
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden>
+              <path d="M9 4l3 3-3 3" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
+              <path d="M11 7H6a3 3 0 100 6h2" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
+            </svg>
+          </button>
+        </div>
+
         <div className="flex-1" />
+
+        {/* Heatmap Controls */}
+        <div className="flex items-center gap-2 mr-4 bg-[var(--surface)] border border-[var(--border)] rounded-lg p-1 px-2">
+          <button
+            onClick={() => setHeatmapVisible(!heatmapVisible)}
+            className={`text-xs font-semibold px-2 py-1 rounded transition-colors ${
+              heatmapVisible ? 'bg-[var(--accent)] text-white' : 'text-[var(--text-3)] hover:text-[var(--text)]'
+            }`}
+          >
+            🔥 Heatmap {heatmapVisible ? 'On' : 'Off'}
+          </button>
+          
+          {heatmapVisible && (
+            <select
+              value={heatmapFilter}
+              onChange={(e) => setHeatmapFilter(e.target.value as any)}
+              className="text-xs bg-transparent text-[var(--text-2)] border-l border-[var(--border)] pl-2 outline-none cursor-pointer"
+            >
+              <option value="5m">Last 5 mins</option>
+              <option value="1h">Last hour</option>
+              <option value="all">All time</option>
+            </select>
+          )}
+        </div>
 
         {!loadingRoom && room && (
           <div className="flex -space-x-1.5 mr-2">
@@ -369,6 +516,7 @@ export default function RoomPage() {
               onStageReady={(stage) => { stageRef.current = stage; }}
             />
           )}
+          <CanvasReplayOverlay />
         </div>
 
         {/* Tabbed sidebar */}
@@ -412,8 +560,14 @@ export default function RoomPage() {
               <EventLog key={roomId} roomId={roomId} token={token} />
             ) : (
               <TaskBoard
-                items={DEMO_TASKS}
-                onJump={(id) => console.log('jump to', id)}
+                items={tasks}
+                onJump={(id) => {
+                  const node = nodes.find(n => n.id === id);
+                  if (node) {
+                    useUiStore.getState().setStage({ x: -node.x + 200, y: -node.y + 200, scale: 1 });
+                    useUiStore.getState().setSelected(id);
+                  }
+                }}
               />
             )}
           </div>
