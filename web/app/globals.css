@@ -165,3 +165,24 @@ body {
 .animate-float-b     { animation: float-b 7.5s ease-in-out infinite; }
 .animate-float-c     { animation: float-c 5s ease-in-out infinite; }
 .animate-slide-right { animation: slide-in-right 0.3s ease both; }
+.animate-spin        { animation: spin 0.7s linear infinite; }
+.animate-pulse       { animation: pulse-dot 1.4s ease-in-out infinite; }
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* ── Editorial bottom-border input ───────────────────────────────────────── */
+.input-line {
+  width: 100%;
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid var(--border-2);
+  padding: 10px 0;
+  font-size: 14px;
+  color: var(--text);
+  outline: none;
+  transition: border-color 0.15s;
+}
+.input-line::placeholder { color: var(--text-3); }
+.input-line:focus { border-bottom-color: var(--accent); }
