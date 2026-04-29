@@ -2,6 +2,7 @@ import * as Y from 'yjs';
 
 export interface AclSnapshot {
   locked: boolean;
+  blockedUsers: string[];
 }
 
 /**
@@ -15,8 +16,8 @@ export function snapshotAcls(doc: Y.Doc): Map<string, AclSnapshot> {
   const nodes = doc.getMap('nodes');
   nodes.forEach((node, id) => {
     if (!(node instanceof Y.Map)) return;
-    const acl = (node.get('acl') as { locked?: boolean } | undefined) ?? {};
-    out.set(id, { locked: !!acl.locked });
+    const acl = (node.get('acl') as { locked?: boolean; blockedUsers?: string[] } | undefined) ?? {};
+    out.set(id, { locked: !!acl.locked, blockedUsers: Array.isArray(acl.blockedUsers) ? acl.blockedUsers : [] });
   });
   return out;
 }

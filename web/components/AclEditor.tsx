@@ -5,27 +5,48 @@ import type { NodeSnapshot } from '@/lib/node-types';
 import { nodeLocalContentBounds } from '@/lib/selection-bounds';
 import { useUiStore } from '@/store/ui';
 
+interface Member {
+  id: string;
+  name: string;
+  color: string;
+  role: string;
+}
+
 interface AclEditorProps {
   node: NodeSnapshot;
   stagePos: { x: number; y: number };
   stageScale: number;
+  members?: Member[];
+  userId?: string;
 }
 
 /**
  * Floating control bar shown above a selected node when the local user is a
- * lead. Lets them lock / unlock the node and delete it. Lock state lives in
- * the node's `acl` field which the server-side RBAC layer reads on every
- * incoming Yjs update.
+ * lead. Lets them lock / unlock the node, block/unblock specific users, and
+ * delete it. Lock state and blockedUsers live in the node's `acl` field which
+ * the server-side RBAC layer reads on every incoming Yjs update.
  */
-export function AclEditor({ node, stagePos, stageScale }: AclEditorProps) {
+export function AclEditor({ node, stagePos, stageScale, members = [], userId }: AclEditorProps) {
   const setSelected = useUiStore((s) => s.setSelected);
 
   const b = nodeLocalContentBounds(node);
   const screenX = (node.x + b.x) * stageScale + stagePos.x;
   const screenY = (node.y + b.y) * stageScale + stagePos.y;
 
+  const blockedUsers: string[] = node.acl.blockedUsers ?? [];
+
+  // Only show non-lead members as candidates for blocking (leads always retain access)
+  const blockableMembers = members.filter((m) => m.id !== userId && m.role !== 'lead');
+
   function toggleLock() {
-    setNodeAcl(node.id, { locked: !node.acl.locked });
+    setNodeAcl(node.id, { locked: !node.acl.locked, blockedUsers });
+  }
+
+  function toggleBlock(memberId: string) {
+    const next = blockedUsers.includes(memberId)
+      ? blockedUsers.filter((id) => id !== memberId)
+      : [...blockedUsers, memberId];
+    setNodeAcl(node.id, { locked: node.acl.locked, blockedUsers: next });
   }
 
   function handleDelete() {
@@ -71,6 +92,44 @@ export function AclEditor({ node, stagePos, stageScale }: AclEditorProps) {
           </>
         )}
       </button>
+
+      {/* Per-user block toggles */}
+      {blockableMembers.length > 0 && (
+        <>
+          <div className="w-px h-4 bg-[var(--border)]" />
+          <span className="text-[10px] text-[var(--text-3)] select-none">Block:</span>
+          <div className="flex items-center gap-0.5">
+            {blockableMembers.map((m) => {
+              const isBlocked = blockedUsers.includes(m.id);
+              return (
+                <button
+                  key={m.id}
+                  onClick={() => toggleBlock(m.id)}
+                  className="relative flex items-center justify-center w-5 h-5 rounded-full text-[9px] font-bold transition-all"
+                  style={{
+                    background: m.color,
+                    opacity: isBlocked ? 1 : 0.85,
+                    outline: isBlocked ? '2px solid #ef4444' : 'none',
+                    outlineOffset: '1px',
+                  }}
+                  title={isBlocked ? `Unblock ${m.name}` : `Block ${m.name} from editing`}
+                >
+                  {m.name.charAt(0).toUpperCase()}
+                  {isBlocked && (
+                    <span
+                      className="absolute -top-0.5 -right-0.5 flex items-center justify-center w-2.5 h-2.5 rounded-full bg-red-500 text-white"
+                      style={{ fontSize: 7, lineHeight: 1 }}
+                    >
+                      ✕
+                    </span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        </>
+      )}
+
       <div className="w-px h-4 bg-[var(--border)]" />
       <button
         onClick={handleDelete}

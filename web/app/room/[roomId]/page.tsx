@@ -1,6 +1,8 @@
 'use client';
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
+import type Konva from 'konva';
+import { ExportButton } from '@/components/ExportButton';
 import dynamic from 'next/dynamic';
 import { useRouter, useParams } from 'next/navigation';
 import Link from 'next/link';
@@ -20,6 +22,7 @@ import { setLocalIdentity, clearLocalAwareness } from '@/lib/awareness-identity'
 import { useOnlineMembers } from '@/lib/use-online-members';
 import type { Role } from '@/lib/node-types';
 import { useYjsNodes } from '@/lib/use-yjs-nodes';
+import { updateTodo } from '@/lib/nodes';
 import {
   clearCanvasHistory,
   canRedoCanvas,
@@ -176,7 +179,11 @@ export default function RoomPage() {
   const [inviteStatus, setInviteStatus] = useState<'idle' | 'sending' | 'sent' | 'error'>('idle');
   const [inviteError, setInviteError] = useState('');
   const [rejection, setRejection] = useState<string | null>(null);
+  const [actionLoading, setActionLoading] = useState(false);
   const [sidebarTab, setSidebarTab] = useState<'events' | 'tasks' | 'zones'>('events');
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement | null>(null);
+  const stageRef = useRef<Konva.Stage | null>(null);
 
   const nodes = useYjsNodes();
 
@@ -187,12 +194,15 @@ export default function RoomPage() {
         for (const todo of node.todos) {
           allTasks.push({
             id: todo.id,
+            nodeId: node.id,
             text: todo.text,
-            status: todo.status,
+            status: todo.status === 'in_progress' ? 'inprogress' : todo.status,
+            kind: todo.kind ?? (node.intent === 'open_question' ? 'open_question' : 'action_item'),
             authorName: room?.members?.find((m) => m.id === node.author_id)?.name || 'Unknown',
             authorColor: room?.members?.find((m) => m.id === node.author_id)?.color || '#ccc',
             createdAt: new Date(node.created_at).toISOString(),
-            nodeId: node.id,
+            assigneeId: typeof todo.assigneeId === 'string' ? todo.assigneeId : null,
+            response: typeof todo.response === 'string' ? todo.response : '',
           });
         }
       }
@@ -286,6 +296,53 @@ export default function RoomPage() {
   }, [roomId]);
 
   useEffect(() => {
+    if (!menuOpen) return;
+    function onDoc(e: MouseEvent) {
+      const el = menuRef.current;
+      if (el && !el.contains(e.target as Node)) setMenuOpen(false);
+    }
+    function onEsc(e: KeyboardEvent) {
+      if (e.key === 'Escape') setMenuOpen(false);
+    }
+    document.addEventListener('mousedown', onDoc);
+    document.addEventListener('keydown', onEsc);
+    return () => {
+      document.removeEventListener('mousedown', onDoc);
+      document.removeEventListener('keydown', onEsc);
+    };
+  }, [menuOpen]);
+
+  async function handleLeave() {
+    if (!token || !roomId) return;
+    if (!confirm('Leave this room? You will lose access.')) return;
+    setActionLoading(true);
+    try {
+      await rooms.leave(roomId, token);
+      router.push('/');
+    } catch (err) {
+      console.error(err);
+      alert(err instanceof Error ? err.message : 'Failed to leave room');
+    } finally {
+      setActionLoading(false);
+    }
+  }
+
+  async function handleDelete() {
+    if (!token || !roomId) return;
+    if (!confirm('Delete this room and all its contents? This cannot be undone.')) return;
+    setActionLoading(true);
+    try {
+      await rooms.delete(roomId, token);
+      router.push('/');
+    } catch (err) {
+      console.error(err);
+      alert(err instanceof Error ? err.message : 'Failed to delete room');
+    } finally {
+      setActionLoading(false);
+    }
+  }
+
+  useEffect(() => {
     function onKey(e: KeyboardEvent) {
       if (myRole === 'viewer') return;
       if (!(e.ctrlKey || e.metaKey)) return;
@@ -350,13 +407,25 @@ export default function RoomPage() {
     <div className="flex flex-col h-screen overflow-hidden">
       {/* ── Top bar ─────────────────────────────────────────────────── */}
       <header
-        className="flex items-center gap-3 px-4 py-2 border-b border-[var(--border)] flex-shrink-0 z-40"
+        className="flex items-center gap-2 px-4 py-2 border-b border-[var(--border)] flex-shrink-0 z-40"
         style={{ background: 'var(--bg)', minHeight: '48px' }}
       >
+        <Link
+          href="/"
+          title="Back to home"
+          aria-label="Back to home"
+          className="w-7 h-7 flex items-center justify-center rounded-md text-[var(--text-2)] hover:text-[var(--text)] hover:bg-[var(--surface-2)] transition-colors flex-shrink-0"
+        >
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden>
+            <path d="M9 3L4.5 7L9 11" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        </Link>
+
         <Link
           href="/dashboard"
           className="text-sm font-bold tracking-widest uppercase font-mono text-[var(--text-2)] hover:text-[var(--text)] transition-colors flex-shrink-0"
           style={{ letterSpacing: '0.15em' }}
+          title="Back to dashboard"
         >
           LIGMA
         </Link>
@@ -371,104 +440,46 @@ export default function RoomPage() {
           )}
         </span>
 
-        {!loadingRoom && room && (
-          <span
-            className="text-[10px] font-semibold px-1.5 py-0.5 rounded-md uppercase tracking-wider flex-shrink-0"
-            style={{
-              background: isLead ? 'rgba(69,117,243,0.15)' : 'var(--surface-2)',
-              color: isLead ? 'var(--accent)' : 'var(--text-3)',
-              border: `1px solid ${isLead ? 'rgba(69,117,243,0.3)' : 'var(--border)'}`,
-            }}
-          >
-            {myRole}
-          </span>
-        )}
-
-        {/* Tools — disabled for viewers */}
-        <div
-          className="flex items-center gap-0.5 mx-2 p-1 rounded-lg bg-[var(--surface)] border border-[var(--border)]"
-          style={{ opacity: myRole === 'viewer' ? 0.5 : 1 }}
-        >
-          {TOOLS.map((t) => (
-            <button
-              key={t.id}
-              onClick={() => setTool(t.id)}
-              title={t.label}
-              disabled={myRole === 'viewer' && t.id !== 'select'}
-              className="w-7 h-7 flex items-center justify-center rounded-md transition-all disabled:cursor-not-allowed"
-              style={{
-                background: tool === t.id ? 'var(--accent)' : 'transparent',
-                color: tool === t.id ? '#fff' : 'var(--text-3)',
-              }}
-            >
-              {t.icon}
-            </button>
-          ))}
-        </div>
-
-        <div className="flex items-center gap-1 p-1 rounded-lg bg-[var(--surface)] border border-[var(--border)]">
-          <button
-            type="button"
-            title="Undo (Ctrl/Cmd+Z)"
-            onClick={() => undoCanvas()}
-            disabled={myRole === 'viewer' || !canUndoCanvas()}
-            className="h-7 w-7 flex items-center justify-center rounded-md transition-all disabled:cursor-not-allowed"
-            style={{
-              color: 'var(--text-3)',
-              opacity: myRole === 'viewer' || !canUndoCanvas() ? 0.4 : 1,
-            }}
-          >
-            <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden>
-              <path d="M5 4L2 7l3 3" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
-              <path d="M3 7h5a3 3 0 110 6H6" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
-            </svg>
-          </button>
-          <button
-            type="button"
-            title="Redo (Ctrl/Cmd+Y or Ctrl/Cmd+Shift+Z)"
-            onClick={() => redoCanvas()}
-            disabled={myRole === 'viewer' || !canRedoCanvas()}
-            className="h-7 w-7 flex items-center justify-center rounded-md transition-all disabled:cursor-not-allowed"
-            style={{
-              color: 'var(--text-3)',
-              opacity: myRole === 'viewer' || !canRedoCanvas() ? 0.4 : 1,
-            }}
-          >
-            <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden>
-              <path d="M9 4l3 3-3 3" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
-              <path d="M11 7H6a3 3 0 100 6h2" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
-            </svg>
-          </button>
-        </div>
-
         <div className="flex-1" />
 
-        {/* Heatmap Controls */}
-        <div className="flex items-center gap-2 mr-4 bg-[var(--surface)] border border-[var(--border)] rounded-lg p-1 px-2">
+        {/* Heatmap — compact toggle, filter only when active */}
+        <div
+          className="flex items-center gap-1 rounded-md border border-[var(--border)] flex-shrink-0"
+          style={{ background: heatmapVisible ? 'var(--surface)' : 'transparent' }}
+        >
           <button
             onClick={() => setHeatmapVisible(!heatmapVisible)}
-            className={`text-xs font-semibold px-2 py-1 rounded transition-colors ${
-              heatmapVisible ? 'bg-[var(--accent)] text-white' : 'text-[var(--text-3)] hover:text-[var(--text)]'
-            }`}
+            title={heatmapVisible ? 'Hide activity heatmap' : 'Show activity heatmap'}
+            className="w-7 h-7 flex items-center justify-center rounded-md transition-colors"
+            style={{
+              color: heatmapVisible ? 'var(--accent)' : 'var(--text-3)',
+            }}
           >
-            🔥 Heatmap {heatmapVisible ? 'On' : 'Off'}
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden>
+              <path
+                d="M7 1.5c1 1.8.5 3-.5 4S5 7.5 5 9a3 3 0 006 0c0-1.2-.5-2-1.2-2.8C10.5 7.5 11 9 11 10A4 4 0 113 10c0-2.5 1.5-3.5 2.5-5C6.2 4 6.7 2.7 7 1.5z"
+                stroke="currentColor"
+                strokeWidth="1.3"
+                strokeLinejoin="round"
+              />
+            </svg>
           </button>
-          
           {heatmapVisible && (
             <select
               value={heatmapFilter}
               onChange={(e) => setHeatmapFilter(e.target.value as any)}
-              className="text-xs bg-transparent text-[var(--text-2)] border-l border-[var(--border)] pl-2 outline-none cursor-pointer"
+              className="text-[11px] bg-transparent text-[var(--text-2)] pr-1 outline-none cursor-pointer border-l border-[var(--border)] pl-1.5 h-7"
+              title="Heatmap time range"
             >
-              <option value="5m">Last 5 mins</option>
-              <option value="1h">Last hour</option>
-              <option value="all">All time</option>
+              <option value="5m">5m</option>
+              <option value="1h">1h</option>
+              <option value="all">All</option>
             </select>
           )}
         </div>
 
         {!loadingRoom && room && (
-          <div className="flex -space-x-1.5 mr-2">
+          <div className="flex -space-x-1.5 flex-shrink-0">
             {(room.members ?? []).slice(0, 5).map((m) => {
               const online = onlineIds.has(m.id);
               return (
@@ -497,28 +508,194 @@ export default function RoomPage() {
           </div>
         )}
 
-        {isLead && (
-          <button
-            className="btn btn-ghost text-xs px-2.5 py-1 flex-shrink-0"
-            onClick={() => { setShowInviteModal(true); setInviteStatus('idle'); }}
-          >
-            <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
-              <path d="M6 1v10M1 6h10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-            </svg>
-            Invite
-          </button>
-        )}
-
         <ConnectionStatus />
+
+        {/* Overflow menu — collects Dashboard / Invite / Export / Leave / Delete */}
+        <div ref={menuRef} className="relative flex-shrink-0">
+          <button
+            type="button"
+            onClick={() => setMenuOpen((o) => !o)}
+            title="Room actions"
+            aria-haspopup="menu"
+            aria-expanded={menuOpen}
+            className="w-7 h-7 flex items-center justify-center rounded-md transition-colors hover:bg-[var(--surface-2)]"
+            style={{ color: 'var(--text-2)' }}
+          >
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden>
+              <circle cx="3" cy="7" r="1.2" fill="currentColor" />
+              <circle cx="7" cy="7" r="1.2" fill="currentColor" />
+              <circle cx="11" cy="7" r="1.2" fill="currentColor" />
+            </svg>
+          </button>
+
+          {menuOpen && (
+            <div
+              role="menu"
+              className="absolute right-0 top-full mt-1.5 w-52 py-1 rounded-lg border border-[var(--border)] bg-[var(--surface)] shadow-2xl animate-fade-in"
+              style={{ zIndex: 60 }}
+            >
+              <Link
+                href="/dashboard"
+                onClick={() => setMenuOpen(false)}
+                className="flex items-center gap-2.5 px-3 py-2 text-xs text-[var(--text)] hover:bg-[var(--surface-2)]"
+              >
+                <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden>
+                  <rect x="1" y="1" width="4" height="4" rx="0.8" stroke="currentColor" strokeWidth="1.2" />
+                  <rect x="7" y="1" width="4" height="4" rx="0.8" stroke="currentColor" strokeWidth="1.2" />
+                  <rect x="1" y="7" width="4" height="4" rx="0.8" stroke="currentColor" strokeWidth="1.2" />
+                  <rect x="7" y="7" width="4" height="4" rx="0.8" stroke="currentColor" strokeWidth="1.2" />
+                </svg>
+                Dashboard
+              </Link>
+
+              {isLead && (
+                <button
+                  type="button"
+                  onClick={() => { setMenuOpen(false); setShowInviteModal(true); setInviteStatus('idle'); }}
+                  className="flex w-full items-center gap-2.5 px-3 py-2 text-xs text-[var(--text)] hover:bg-[var(--surface-2)]"
+                >
+                  <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden>
+                    <path d="M6 1v10M1 6h10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+                  </svg>
+                  Invite member
+                </button>
+              )}
+
+              {token && roomId && (
+                <ExportButton
+                  stageRef={stageRef}
+                  roomId={roomId}
+                  roomName={room?.name ?? 'Room'}
+                  token={token}
+                  renderTrigger={(open) => (
+                    <button
+                      type="button"
+                      onClick={() => { setMenuOpen(false); open(); }}
+                      className="flex w-full items-center gap-2.5 px-3 py-2 text-xs text-[var(--text)] hover:bg-[var(--surface-2)]"
+                    >
+                      <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden>
+                        <path
+                          d="M6 1v7M3 5l3 3 3-3M1 9v1.5A.5.5 0 001.5 11h9a.5.5 0 00.5-.5V9"
+                          stroke="currentColor"
+                          strokeWidth="1.4"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        />
+                      </svg>
+                      Export summary
+                    </button>
+                  )}
+                />
+              )}
+
+              <div className="my-1 h-px bg-[var(--border)]" />
+
+              <button
+                type="button"
+                onClick={() => { setMenuOpen(false); handleLeave(); }}
+                disabled={actionLoading}
+                className="flex w-full items-center gap-2.5 px-3 py-2 text-xs text-[var(--text)] hover:bg-[var(--surface-2)] disabled:opacity-50"
+              >
+                <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden>
+                  <path d="M7 3V2a1 1 0 00-1-1H2a1 1 0 00-1 1v8a1 1 0 001 1h4a1 1 0 001-1V9" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
+                  <path d="M5 6h6m0 0L9 4m2 2L9 8" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+                Leave room
+              </button>
+
+              {isLead && (
+                <button
+                  type="button"
+                  onClick={() => { setMenuOpen(false); handleDelete(); }}
+                  disabled={actionLoading}
+                  className="flex w-full items-center gap-2.5 px-3 py-2 text-xs text-[var(--danger)] hover:bg-[var(--surface-2)] disabled:opacity-50"
+                >
+                  <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden>
+                    <path d="M2 3h8M5 3V2a1 1 0 011-1h0a1 1 0 011 1v1M3 3v7a1 1 0 001 1h4a1 1 0 001-1V3" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
+                  </svg>
+                  Delete room
+                </button>
+              )}
+            </div>
+          )}
+        </div>
       </header>
 
       {/* ── Canvas + Sidebar ───────────────────────────────────────── */}
       <div className="relative flex min-h-0 flex-1 overflow-hidden">
         <div className="flex-1 relative overflow-hidden">
           {user && room && !loadingRoom && (
-            <Canvas userId={user.id} role={myRole} />
+            <Canvas
+              userId={user.id}
+              role={myRole}
+              members={room.members}
+              onStageReady={(stage) => { stageRef.current = stage; }}
+            />
           )}
           <CanvasReplayOverlay />
+
+          {/* Floating canvas toolbar — tools + undo/redo */}
+          {!loadingRoom && room && (
+            <div
+              className="pointer-events-none absolute top-3 left-1/2 -translate-x-1/2 z-30 flex items-center gap-2"
+            >
+              <div
+                className="pointer-events-auto flex items-center gap-0.5 p-1 rounded-lg bg-[var(--surface)] border border-[var(--border)] shadow-lg"
+                style={{ opacity: myRole === 'viewer' ? 0.6 : 1 }}
+              >
+                {TOOLS.map((t) => (
+                  <button
+                    key={t.id}
+                    onClick={() => setTool(t.id)}
+                    title={t.label}
+                    disabled={myRole === 'viewer' && t.id !== 'select'}
+                    className="w-8 h-8 flex items-center justify-center rounded-md transition-all disabled:cursor-not-allowed"
+                    style={{
+                      background: tool === t.id ? 'var(--accent)' : 'transparent',
+                      color: tool === t.id ? '#fff' : 'var(--text-2)',
+                    }}
+                  >
+                    {t.icon}
+                  </button>
+                ))}
+              </div>
+
+              <div className="pointer-events-auto flex items-center gap-0.5 p-1 rounded-lg bg-[var(--surface)] border border-[var(--border)] shadow-lg">
+                <button
+                  type="button"
+                  title="Undo (Ctrl/Cmd+Z)"
+                  onClick={() => undoCanvas()}
+                  disabled={myRole === 'viewer' || !canUndoCanvas()}
+                  className="h-8 w-8 flex items-center justify-center rounded-md transition-all disabled:cursor-not-allowed"
+                  style={{
+                    color: 'var(--text-2)',
+                    opacity: myRole === 'viewer' || !canUndoCanvas() ? 0.35 : 1,
+                  }}
+                >
+                  <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden>
+                    <path d="M5 4L2 7l3 3" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
+                    <path d="M3 7h5a3 3 0 110 6H6" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
+                  </svg>
+                </button>
+                <button
+                  type="button"
+                  title="Redo (Ctrl/Cmd+Y or Ctrl/Cmd+Shift+Z)"
+                  onClick={() => redoCanvas()}
+                  disabled={myRole === 'viewer' || !canRedoCanvas()}
+                  className="h-8 w-8 flex items-center justify-center rounded-md transition-all disabled:cursor-not-allowed"
+                  style={{
+                    color: 'var(--text-2)',
+                    opacity: myRole === 'viewer' || !canRedoCanvas() ? 0.35 : 1,
+                  }}
+                >
+                  <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden>
+                    <path d="M9 4l3 3-3 3" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
+                    <path d="M11 7H6a3 3 0 100 6h2" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
+                  </svg>
+                </button>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Tabbed sidebar */}
@@ -563,6 +740,8 @@ export default function RoomPage() {
             ) : sidebarTab === 'tasks' ? (
               <TaskBoard
                 items={tasks}
+                members={room?.members ?? []}
+                currentUserId={user?.id ?? ''}
                 onJump={(id) => {
                   const node = nodes.find(n => n.id === id);
                   if (node) {
@@ -570,6 +749,7 @@ export default function RoomPage() {
                     useUiStore.getState().setSelected(id);
                   }
                 }}
+                onUpdateTask={(nodeId, todoId, patch) => updateTodo(nodeId, todoId, patch)}
               />
             ) : sidebarTab === 'zones' ? (
               <PresenceZonesSidebar

@@ -34,7 +34,7 @@ export default function RegisterPage() {
   }, [hydrate]);
 
   useEffect(() => {
-    if (token) router.replace('/dashboard');
+    if (token) router.replace('/');
   }, [token, router]);
 
   async function handleSubmit(e: FormEvent) {
@@ -44,7 +44,7 @@ export default function RegisterPage() {
     try {
       const res = await auth.register({ name, email, password, color });
       setAuth(res.user, res.token);
-      router.push('/dashboard');
+      router.push('/');
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Registration failed');
     } finally {

@@ -5,6 +5,8 @@ import { WebSocketServer } from 'ws';
 import { authRoutes } from './routes/auth.js';
 import { roomRoutes } from './routes/rooms.js';
 import { inviteRoutes } from './routes/invites.js';
+import { exportRoutes } from './routes/export.js';
+import { dashboardRoutes } from './routes/dashboard.js';
 import { createUpgradeHandler } from './ws.js';
 
 dotenv.config();
@@ -14,20 +16,25 @@ const app = Fastify({ logger: true });
 /** Comma-separated list in ALLOWED_ORIGIN, e.g. http://localhost:3000,http://127.0.0.1:3000 */
 function corsOrigin(): string | string[] | boolean {
   const raw = process.env['ALLOWED_ORIGIN']?.trim();
-  if (!raw) return 'http://localhost:3000';
+  if (!raw) return ['http://localhost:3000', 'http://127.0.0.1:3000'];
   if (raw === '*') return true;
   const list = raw.split(',').map((s) => s.trim()).filter(Boolean);
   return list.length === 1 ? list[0]! : list;
 }
 
+// @fastify/cors defaults Allow-Methods to GET,HEAD,POST only — DELETE (and PUT/PATCH)
+// preflights fail without this, so the browser reports CORS / "failed to fetch".
 await app.register(cors, {
   origin: corsOrigin(),
   credentials: true,
+  methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE', 'OPTIONS'],
 });
 
 await app.register(authRoutes);
 await app.register(roomRoutes);
 await app.register(inviteRoutes);
+await app.register(exportRoutes);
+await app.register(dashboardRoutes);
 
 const PORT = Number(process.env['PORT'] ?? 3001);
 
