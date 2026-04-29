@@ -7,6 +7,7 @@ import { getRoomDoc } from '../rooms.js';
 
 type TaskStatus = 'open' | 'inprogress' | 'completed' | 'closed';
 
+//types
 interface MembershipRow {
   room_id: string;
   room_name: string;
