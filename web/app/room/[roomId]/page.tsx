@@ -152,6 +152,11 @@ export default function RoomPage() {
   const setTool = useUiStore((s) => s.setTool);
   const setRole = useUiStore((s) => s.setRole);
 
+  const heatmapVisible = useUiStore((s) => s.heatmapVisible);
+  const heatmapFilter = useUiStore((s) => s.heatmapFilter);
+  const setHeatmapVisible = useUiStore((s) => s.setHeatmapVisible);
+  const setHeatmapFilter = useUiStore((s) => s.setHeatmapFilter);
+
   const [room, setRoom] = useState<Room | null>(null);
   const [loadingRoom, setLoadingRoom] = useState(true);
   const [showInviteModal, setShowInviteModal] = useState(false);
@@ -425,6 +430,30 @@ export default function RoomPage() {
         </div>
 
         <div className="flex-1" />
+
+        {/* Heatmap Controls */}
+        <div className="flex items-center gap-2 mr-4 bg-[var(--surface)] border border-[var(--border)] rounded-lg p-1 px-2">
+          <button
+            onClick={() => setHeatmapVisible(!heatmapVisible)}
+            className={`text-xs font-semibold px-2 py-1 rounded transition-colors ${
+              heatmapVisible ? 'bg-[var(--accent)] text-white' : 'text-[var(--text-3)] hover:text-[var(--text)]'
+            }`}
+          >
+            🔥 Heatmap {heatmapVisible ? 'On' : 'Off'}
+          </button>
+          
+          {heatmapVisible && (
+            <select
+              value={heatmapFilter}
+              onChange={(e) => setHeatmapFilter(e.target.value as any)}
+              className="text-xs bg-transparent text-[var(--text-2)] border-l border-[var(--border)] pl-2 outline-none cursor-pointer"
+            >
+              <option value="5m">Last 5 mins</option>
+              <option value="1h">Last hour</option>
+              <option value="all">All time</option>
+            </select>
+          )}
+        </div>
 
         {!loadingRoom && room && (
           <div className="flex -space-x-1.5 mr-2">

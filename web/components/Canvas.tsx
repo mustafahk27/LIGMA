@@ -15,6 +15,8 @@ import { ShapeRenderer } from './ShapeRenderer';
 import { NodeFormatBar } from './NodeFormatBar';
 import { SelectionLayerBar } from './SelectionLayerBar';
 import { TemplateMenu } from './TemplateMenu';
+import { Minimap } from './Minimap';
+import { startHeatmapTracking, stopHeatmapTracking, trackActivity } from '@/lib/heatmap';
 import {
   appendPenPoints,
   createNode,
@@ -117,6 +119,8 @@ export default function Canvas({ userId, role }: CanvasProps) {
   const setEditing = useUiStore((s) => s.setEditing);
   const stickyDraftFill = useUiStore((s) => s.stickyDraftFill);
   const setTool = useUiStore((s) => s.setTool);
+  const heatmapVisible = useUiStore((s) => s.heatmapVisible);
+  const heatmapFilter = useUiStore((s) => s.heatmapFilter);
 
   const nodes = useYjsNodes();
 
@@ -128,6 +132,11 @@ export default function Canvas({ userId, role }: CanvasProps) {
     start: Record<string, { x: number; y: number }>;
   } | null>(null);
   const [isTransforming, setIsTransforming] = useState(false);
+
+  useEffect(() => {
+    startHeatmapTracking(userId);
+    return () => stopHeatmapTracking();
+  }, [userId]);
 
   const eraseNodeOrGroup = useCallback(
     (id: string) => {
@@ -186,6 +195,7 @@ export default function Canvas({ userId, role }: CanvasProps) {
       const s = st.start[nid];
       if (g && s) g.position({ x: s.x + dx, y: s.y + dy });
     }
+    trackActivity(x, y, 2);
   }, [nodes]);
 
   const handleShapeDragEnd = useCallback(
@@ -392,6 +402,7 @@ export default function Canvas({ userId, role }: CanvasProps) {
 
     const pos = toStageCoords(e.clientX, e.clientY);
     setLocalCursor(pos.x, pos.y);
+    trackActivity(pos.x, pos.y, 1);
 
     handleCreationDrag(pos);
   }
@@ -412,6 +423,7 @@ export default function Canvas({ userId, role }: CanvasProps) {
     if (role === 'viewer') return;
 
     const pos = toStageCoords(e.evt.clientX, e.evt.clientY);
+    trackActivity(pos.x, pos.y, 5);
 
     if (tool === 'select') {
       setSelected(null);
@@ -532,6 +544,11 @@ export default function Canvas({ userId, role }: CanvasProps) {
   function onStageDragMove(e: Konva.KonvaEventObject<DragEvent>) {
     if (e.target !== stageRef.current) return;
     setStage({ x: e.target.x(), y: e.target.y() });
+    const pos = stageRef.current.getPointerPosition();
+    if (pos) {
+      const stageCoords = toStageCoords(pos.x, pos.y);
+      trackActivity(stageCoords.x, stageCoords.y, 2);
+    }
   }
 
   /* ── Render helpers ─────────────────────────────────────────────────── */
@@ -651,6 +668,13 @@ export default function Canvas({ userId, role }: CanvasProps) {
         )}
         <NodeFormatBar node={selectedNode ?? null} role={role} />
       </div>
+
+      {/* Minimap Overlay */}
+      <Minimap 
+        visible={heatmapVisible} 
+        filter={heatmapFilter} 
+        onJump={(x, y) => setStage({ x: -x * stageScale + size.w / 2, y: -y * stageScale + size.h / 2 })}
+      />
 
       {/* Cursor overlay (HTML on top of Konva) */}
       <Cursors stagePos={stagePos} stageScale={stageScale} />
