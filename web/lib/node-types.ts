@@ -26,6 +26,8 @@ export type NodeKind =
 export interface NodeAcl {
   /** When true only leads may mutate this node. */
   locked: boolean;
+  /** Specific user IDs blocked from editing this node (regardless of role). */
+  blockedUsers?: string[];
 }
 
 /**
@@ -104,8 +106,9 @@ export type Role = 'lead' | 'contributor' | 'viewer';
  * Returns true when the actor's role is allowed to mutate the given ACL.
  * Mirrors the server-side RBAC check.
  */
-export function canActOnNode(role: Role, acl: NodeAcl | undefined): boolean {
+export function canActOnNode(role: Role, acl: NodeAcl | undefined, userId?: string): boolean {
   if (role === 'viewer') return false;
   if (acl?.locked && role !== 'lead') return false;
+  if (userId && acl?.blockedUsers?.includes(userId)) return false;
   return true;
 }

@@ -616,6 +616,7 @@ export default function RoomPage() {
             <Canvas
               userId={user.id}
               role={myRole}
+              members={room.members}
               onStageReady={(stage) => { stageRef.current = stage; }}
             />
           )}

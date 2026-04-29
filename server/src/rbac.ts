@@ -30,6 +30,7 @@ export function validateUpdate(
   roomDoc: Y.Doc,
   incoming: Uint8Array,
   role: Role,
+  actorId: string,
 ): ValidationResult {
   // Fast-path: viewers can never mutate ANY field, regardless of ACLs
   if (role === 'viewer') {
@@ -80,6 +81,15 @@ export function validateUpdate(
       }
       if (oldAcl.locked !== newAcl.locked && role !== 'lead') {
         return { ok: false, reason: 'only leads can change lock state', nodeId: id };
+      }
+      // Per-user block: leads can change blockedUsers; blocked users cannot mutate
+      if (oldAcl.blockedUsers.includes(actorId) && role !== 'lead') {
+        return { ok: false, reason: 'you have been blocked from editing this node', nodeId: id };
+      }
+      const blockedChanged = JSON.stringify(oldAcl.blockedUsers.slice().sort()) !==
+                             JSON.stringify(newAcl.blockedUsers.slice().sort());
+      if (blockedChanged && role !== 'lead') {
+        return { ok: false, reason: 'only leads can change per-user access', nodeId: id };
       }
     }
   }

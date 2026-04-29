@@ -94,7 +94,7 @@ export function applyAndBroadcast(
   const room = getRoomOrCreate(roomId);
 
   // 1. RBAC validation
-  const verdict: ValidationResult = validateUpdate(room.doc, update, role);
+  const verdict: ValidationResult = validateUpdate(room.doc, update, role, actorId);
   if (!verdict.ok) {
     console.warn(
       `[ydoc-store] REJECTED update from actor=${actorId} role=${role} ` +
