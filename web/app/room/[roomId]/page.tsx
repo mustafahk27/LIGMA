@@ -17,6 +17,7 @@ import { useWsProvider } from '@/lib/ws-provider';
 import { setLocalIdentity, clearLocalAwareness } from '@/lib/awareness-identity';
 import { useOnlineMembers } from '@/lib/use-online-members';
 import type { Role } from '@/lib/node-types';
+import { useYjsNodes } from '@/lib/use-yjs-nodes';
 
 /* Konva needs `window` — defer the entire Canvas to client-only */
 const Canvas = dynamic(() => import('@/components/Canvas'), {
@@ -110,7 +111,7 @@ const TOOLS: { id: Tool; label: string; icon: React.ReactNode }[] = [
   },
 ];
 
-const DEMO_TASKS: TaskItem[] = [];
+
 
 export default function RoomPage() {
   const router = useRouter();
@@ -137,6 +138,28 @@ export default function RoomPage() {
   const [inviteError, setInviteError] = useState('');
   const [rejection, setRejection] = useState<string | null>(null);
   const [sidebarTab, setSidebarTab] = useState<'events' | 'tasks'>('events');
+
+  const nodes = useYjsNodes();
+
+  const tasks = useMemo(() => {
+    const allTasks: TaskItem[] = [];
+    for (const node of nodes) {
+      if (node.todos && Array.isArray(node.todos)) {
+        for (const todo of node.todos) {
+          allTasks.push({
+            id: todo.id,
+            text: todo.text,
+            status: todo.status,
+            authorName: room?.members?.find((m) => m.id === node.author_id)?.name || 'Unknown',
+            authorColor: room?.members?.find((m) => m.id === node.author_id)?.color || '#ccc',
+            createdAt: new Date(node.created_at).toISOString(),
+            nodeId: node.id,
+          });
+        }
+      }
+    }
+    return allTasks.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  }, [nodes, room]);
 
   /* ── Auth bootstrap ─────────────────────────────────────────────────── */
   useEffect(() => {
@@ -402,8 +425,14 @@ export default function RoomPage() {
               <EventLog key={roomId} roomId={roomId} token={token} />
             ) : (
               <TaskBoard
-                items={DEMO_TASKS}
-                onJump={(id) => console.log('jump to', id)}
+                items={tasks}
+                onJump={(id) => {
+                  const node = nodes.find(n => n.id === id);
+                  if (node) {
+                    useUiStore.getState().setStage({ x: -node.x + 200, y: -node.y + 200, scale: 1 });
+                    useUiStore.getState().setSelected(id);
+                  }
+                }}
               />
             )}
           </div>

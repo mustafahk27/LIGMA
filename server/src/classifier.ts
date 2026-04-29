@@ -92,3 +92,64 @@ export async function classify(text: string): Promise<IntentLabel> {
   cache.set(hash, intent);
   return intent;
 }
+
+// ─── SHA-256 cache (text hash → todos) ──────────────────────────────────────
+const todosCache = new Map<string, string[]>();
+
+export async function extractTodos(text: string): Promise<string[]> {
+  const trimmed = text.trim();
+  if (!trimmed) return [];
+
+  const hash = createHash('sha256').update(trimmed).digest('hex');
+  const hit = todosCache.get(hash);
+  if (hit !== undefined) return hit;
+
+  const apiKey = process.env['GROQ_API_KEY'];
+  if (!apiKey) return [];
+
+  const SYSTEM_PROMPT = `You extract actionable to-dos from a sticky note.
+Respond with ONLY a valid JSON array of strings. Each string should be a concise to-do item extracted from the text.
+If there are no clear to-dos, return an empty array [].
+Do not include any markdown formatting like \`\`\`json, just the raw JSON array.`;
+
+  try {
+    const res = await fetch(GROQ_ENDPOINT, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        model: 'llama-3.1-8b-instant',
+        messages: [
+          { role: 'system', content: SYSTEM_PROMPT },
+          { role: 'user', content: text.slice(0, 500) },
+        ],
+        temperature: 0,
+        max_tokens: 150,
+      }),
+    });
+
+    if (!res.ok) return [];
+
+    const json = (await res.json()) as {
+      choices: Array<{ message: { content: string } }>;
+    };
+    
+    const raw = json.choices[0]?.message.content.trim() ?? '[]';
+    // Remove markdown code blocks if the model ignored instructions
+    const cleaned = raw.replace(/^```(json)?/, '').replace(/```$/, '').trim();
+    
+    const parsed = JSON.parse(cleaned);
+    if (Array.isArray(parsed)) {
+      const result = parsed.filter(t => typeof t === 'string');
+      todosCache.set(hash, result);
+      return result;
+    }
+  } catch (err) {
+    console.error('[classifier] extractTodos error:', err);
+  }
+  
+  todosCache.set(hash, []);
+  return [];
+}

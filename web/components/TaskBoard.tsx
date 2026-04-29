@@ -8,6 +8,8 @@ export interface TaskItem {
   authorName: string;
   authorColor: string;
   createdAt: string; // ISO string
+  status: 'open' | 'in_progress' | 'closed';
+  nodeId: string;
 }
 
 interface TaskBoardProps {
@@ -121,7 +123,19 @@ function TaskCard({
       style={{ animationDelay: `${delay}s` }}
     >
       {/* Text */}
-      <p className="text-xs text-[var(--text)] leading-relaxed font-medium">{snippet}</p>
+      <div className="flex items-start gap-2">
+        <div className="flex-1">
+          <p className="text-xs text-[var(--text)] leading-relaxed font-medium">{snippet}</p>
+        </div>
+        <div className="flex-shrink-0">
+          <span className="text-[9px] font-bold px-1.5 py-0.5 rounded uppercase tracking-wider" style={{
+            background: item.status === 'closed' ? 'var(--success)' : item.status === 'in_progress' ? 'var(--warning)' : 'var(--surface-2)',
+            color: item.status === 'closed' ? '#fff' : item.status === 'in_progress' ? '#000' : 'var(--text-2)'
+          }}>
+            {item.status.replace('_', ' ')}
+          </span>
+        </div>
+      </div>
 
       {/* Footer */}
       <div className="flex items-center justify-between">
@@ -143,7 +157,7 @@ function TaskCard({
 
           {onJump && (
             <button
-              onClick={() => onJump(item.id)}
+              onClick={() => onJump(item.nodeId)}
               className="opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1 text-[10px] text-[var(--accent)] hover:underline"
               title="Jump to node"
             >

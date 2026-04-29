@@ -1,5 +1,11 @@
 import type * as Y from 'yjs';
 
+export interface TodoItem {
+  id: string;
+  text: string;
+  status: 'open' | 'in_progress' | 'closed';
+}
+
 export type NodeKind =
   | 'sticky'
   | 'text'
@@ -53,6 +59,7 @@ export interface NodeSnapshot {
   fontBold: boolean;
   fontItalic: boolean;
   textUnderline: boolean;
+  todos?: TodoItem[];
 }
 
 export type NodeMap = Y.Map<unknown>;
