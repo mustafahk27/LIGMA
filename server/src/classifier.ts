@@ -19,33 +19,15 @@ const VALID_LABELS: IntentLabel[] = [
 // ─── SHA-256 cache (text hash → intent) ──────────────────────────────────────
 const cache = new Map<string, IntentLabel>();
 
-// ─── Regex classifier ─────────────────────────────────────────────────────────
-
-const TODO_RE = /^(todo|action item|task)\s*[:]/i;
-const IMPERATIVE_RE =
-  /^(fix|add|update|remove|create|write|review|implement|deploy|check|test|make|send|schedule|complete|finish|set up|setup|prepare|define|discuss|decide|clarify|confirm|follow up)\b/i;
-const QUESTION_RE = /\?\s*$/;
-const DECISION_RE =
-  /\b(decided|we('ll| will) go with|agreed|going with|decision:|will use|we('ll| will) use|we('re| are) going with|we('re| are) using)\b/i;
-const REFERENCE_RE = /https?:\/\/\S+|\[ref\]/i;
-
-function regexClassify(text: string): IntentLabel | null {
-  if (TODO_RE.test(text) || IMPERATIVE_RE.test(text)) return 'action_item';
-  if (QUESTION_RE.test(text)) return 'open_question';
-  if (DECISION_RE.test(text)) return 'decision';
-  if (REFERENCE_RE.test(text)) return 'reference';
-  return null; // ambiguous — let Groq decide
-}
-
 // ─── Groq classifier ──────────────────────────────────────────────────────────
 
 const SYSTEM_PROMPT = `You classify sticky note text from a collaborative whiteboard session.
 Respond with EXACTLY ONE of these labels — nothing else, no punctuation, no explanation:
-action_item   (a task, to-do, or action)
-decision      (a resolved choice or agreement)
-open_question (a question that needs answering)
-reference     (a URL, link, or citation)
-none          (everything else)`;
+action_item   (a task, to-do, or action that needs to be done)
+decision      (a resolved choice, agreement, or conclusion)
+open_question (an unresolved question or something that needs an answer)
+reference     (a URL, link, citation, or external resource)
+none          (everything else — general notes, observations, brainstorming)`;
 
 async function groqClassify(text: string): Promise<IntentLabel> {
   const apiKey = process.env['GROQ_API_KEY'];
@@ -94,8 +76,7 @@ async function groqClassify(text: string): Promise<IntentLabel> {
 // ─── Public API ───────────────────────────────────────────────────────────────
 
 /**
- * Classify a piece of text as an intent label.
- * Regex runs first (instant, free). Groq is called only for ambiguous text.
+ * Classify a piece of text as an intent label using Groq (Llama 3.1 8B).
  * Results are cached by SHA-256(text) to skip repeated API calls.
  */
 export async function classify(text: string): Promise<IntentLabel> {
@@ -106,7 +87,7 @@ export async function classify(text: string): Promise<IntentLabel> {
   const hit = cache.get(hash);
   if (hit !== undefined) return hit;
 
-  const intent = regexClassify(trimmed) ?? (await groqClassify(trimmed));
+  const intent = await groqClassify(trimmed);
 
   cache.set(hash, intent);
   return intent;

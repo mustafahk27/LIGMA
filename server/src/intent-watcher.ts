@@ -1,6 +1,6 @@
 import * as Y from 'yjs';
 import { classify } from './classifier.js';
-import { query } from './db.js';
+import { persistYjsUpdate } from './event-log.js';
 import { broadcastToRoom } from './rooms.js';
 
 const SERVER_INTENT_ORIGIN = 'server-intent';
@@ -23,21 +23,25 @@ async function applyIntent(
   const intent = await classify(text);
 
   const doc = nodeMap.doc;
-  if (doc) {
-    doc.transact(() => {
-      nodeMap.set('intent', intent);
-    }, SERVER_INTENT_ORIGIN);
-  } else {
-    nodeMap.set('intent', intent);
-  }
+  if (!doc) return;
 
-  await query(
-    `UPDATE canvas_nodes SET intent = $1, updated_at = NOW()
-     WHERE id = $2 AND room_id = $3`,
-    [intent, nodeId, roomId]
-  ).catch((err: unknown) => {
-    console.error(`[intent-watcher] DB write failed node=${nodeId}:`, err);
-  });
+  // Write intent into the Y.Doc and capture the resulting update binary
+  let encodedUpdate: Uint8Array | null = null;
+  const captureUpdate = (update: Uint8Array, origin: unknown) => {
+    if (origin === SERVER_INTENT_ORIGIN) encodedUpdate = update;
+  };
+  doc.on('update', captureUpdate);
+
+  doc.transact(() => {
+    nodeMap.set('intent', intent);
+  }, SERVER_INTENT_ORIGIN);
+
+  doc.off('update', captureUpdate);
+
+  // Persist the intent update to the event log so it survives server restarts
+  if (encodedUpdate) {
+    persistYjsUpdate(roomId, '__server__', encodedUpdate);
+  }
 
   console.log(
     `[intent-watcher] room=${roomId} node=${nodeId} intent=${intent} ` +
@@ -80,11 +84,10 @@ function getTextContent(nodeMap: Y.Map<unknown>): string {
 
 /**
  * Attach a single deep observer to the room's top-level `nodes` Y.Map.
- * Uses `event.path` to identify which node and field changed, which is more
- * reliable than per-node observers (avoids Y.Map instance identity issues).
+ * Uses `event.path` to identify which node and field changed.
  *
- * Also listens for doc updates tagged SERVER_INTENT_ORIGIN and broadcasts
- * them to all connected WebSocket clients.
+ * Server-originated intent updates are broadcast to all clients AND persisted
+ * to the event log so they survive server restarts (replayed during hydration).
  */
 export function watchRoomDoc(roomId: string, doc: Y.Doc): void {
   // Broadcast server-originated intent updates to all clients
@@ -101,12 +104,11 @@ export function watchRoomDoc(roomId: string, doc: Y.Doc): void {
 
     for (const event of events) {
       const path = event.path;
-      if (path.length === 0) continue; // change to nodes map itself (add/remove)
+      if (path.length === 0) continue;
 
       const nodeId = path[0] as string;
 
       if (path.length === 1) {
-        // A key inside a nodeMap changed (e.g. 'content' replaced, or 'intent' written)
         const mapEvent = event as Y.YMapEvent<unknown>;
         const keys = mapEvent.changes?.keys;
         if (!keys) continue;
@@ -114,7 +116,6 @@ export function watchRoomDoc(roomId: string, doc: Y.Doc): void {
         if (keys.size === 1 && keys.has('intent')) continue;
         if (keys.has('content')) toClassify.add(nodeId);
       } else if (path.length >= 2 && path[1] === 'content') {
-        // Character-level edit inside the Y.Text content field
         toClassify.add(nodeId);
       }
     }
@@ -126,6 +127,21 @@ export function watchRoomDoc(roomId: string, doc: Y.Doc): void {
       }
     }
   });
+
+  // On cold start: re-classify any nodes that have content but no intent yet.
+  // This covers nodes whose intent was never persisted (e.g. pre-event-log era).
+  // Results are persisted to the event log so future restarts load them from there.
+  let startupDelay = 0;
+  for (const [nodeId, nodeMap] of nodes) {
+    if (!(nodeMap instanceof Y.Map)) continue;
+    if (nodeMap.get('intent')) continue; // already classified
+    const text = getTextContent(nodeMap);
+    if (!text.trim()) continue;
+    setTimeout(() => {
+      void applyIntent(roomId, nodeId, nodeMap, text);
+    }, startupDelay);
+    startupDelay += 150; // stagger to stay within Groq rate limits
+  }
 
   console.log(`[intent-watcher] watching room=${roomId}`);
 }

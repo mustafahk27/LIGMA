@@ -3,7 +3,6 @@ import { getRoomOrCreate, broadcastToRoom } from './rooms.js';
 import { getEventsSince, persistYjsUpdate, appendEvent } from './event-log.js';
 import { validateUpdate, type Role, type ValidationResult } from './rbac.js';
 import { watchRoomDoc } from './intent-watcher.js';
-import { query } from './db.js';
 import { WebSocket } from 'ws';
 
 // Throttles node_updated events (2s cooldown per node ID)
@@ -58,51 +57,11 @@ async function _hydrateDocFromDB(roomId: string): Promise<void> {
   (room.doc as Y.Doc & { _hydrated?: boolean })._hydrated = true;
   console.log(`[ydoc-store] Room ${roomId} hydrated with ${events.length} events`);
 
-  // Re-apply persisted intents from canvas_nodes into the Y.Doc.
-  // The intent writes from the classifier are NOT in the yjs_update event log,
-  // so after a server restart the Y.Doc would have nodes with no intent fields.
-  // Querying canvas_nodes and writing them back here fixes that.
-  await rehydrateIntents(roomId, room.doc);
+  // Intent updates are now persisted as yjs_update events (actor='__server__'),
+  // so they are already restored by the replay loop above. No separate step needed.
 
   // Start watching for content changes so we can classify intent
   watchRoomDoc(roomId, room.doc);
-}
-
-// ─── Intent rehydration (cold-start) ─────────────────────────────────────────
-
-/**
- * After replaying yjs_update events, the Y.Doc has all canvas content but no
- * intent fields (those are written server-side and never go into the event log).
- * This function reads the persisted intents from canvas_nodes and writes them
- * back into the Y.Doc so badges survive a server restart.
- */
-async function rehydrateIntents(roomId: string, doc: Y.Doc): Promise<void> {
-  let rows: Array<{ id: string; intent: string }>;
-  try {
-    const result = await query<{ id: string; intent: string }>(
-      `SELECT id, intent FROM canvas_nodes
-       WHERE room_id = $1 AND intent IS NOT NULL AND deleted_at IS NULL`,
-      [roomId]
-    );
-    rows = result.rows;
-  } catch (err) {
-    console.error(`[ydoc-store] rehydrateIntents query failed for room ${roomId}:`, err);
-    return;
-  }
-
-  if (rows.length === 0) return;
-
-  const nodes = doc.getMap<Y.Map<unknown>>('nodes');
-  doc.transact(() => {
-    for (const { id, intent } of rows) {
-      const nodeMap = nodes.get(id);
-      if (nodeMap instanceof Y.Map) {
-        nodeMap.set('intent', intent);
-      }
-    }
-  });
-
-  console.log(`[ydoc-store] Rehydrated ${rows.length} intents for room ${roomId}`);
 }
 
 // ─── Apply + Persist + Broadcast ─────────────────────────────────────────────
