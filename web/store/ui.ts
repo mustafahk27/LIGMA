@@ -11,7 +11,8 @@ export type Tool =
   | 'circle'
   | 'pen'
   | 'line'
-  | 'arrow';
+  | 'arrow'
+  | 'erase';
 
 interface UiStore {
   // ── Tool / selection ─────────────────────────────────────────────────────

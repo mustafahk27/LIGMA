@@ -110,6 +110,21 @@ const TOOLS: { id: Tool; label: string; icon: React.ReactNode }[] = [
       </svg>
     ),
   },
+  {
+    id: 'erase',
+    label: 'Eraser (E)',
+    icon: (
+      <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+        <path
+          d="M3 9l3.9-3.9a1.8 1.8 0 012.6 0l1.4 1.4a1.8 1.8 0 010 2.6L8 12H5.2L3 9z"
+          stroke="currentColor"
+          strokeWidth="1.3"
+          strokeLinejoin="round"
+        />
+        <path d="M8.2 12H12" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
+      </svg>
+    ),
+  },
 ];
 
 
@@ -231,6 +246,7 @@ export default function RoomPage() {
       l: 'line',
       a: 'arrow',
       p: 'pen',
+      e: 'erase',
     };
     function onKey(e: KeyboardEvent) {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;

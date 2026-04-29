@@ -129,6 +129,27 @@ export default function Canvas({ userId, role }: CanvasProps) {
   } | null>(null);
   const [isTransforming, setIsTransforming] = useState(false);
 
+  const eraseNodeOrGroup = useCallback(
+    (id: string) => {
+      const node = nodes.find((n) => n.id === id);
+      if (!node || !canActOnNode(role, node.acl)) return;
+
+      const toRemove =
+        node.group_id && node.group_id.length > 0
+          ? nodes.filter((n) => n.group_id === node.group_id && canActOnNode(role, n.acl))
+          : [node];
+
+      if (toRemove.length === 0) return;
+
+      toRemove.forEach((n) => deleteNode(n.id));
+      if (selectedNodeId && toRemove.some((n) => n.id === selectedNodeId)) {
+        setSelected(null);
+        setEditing(null);
+      }
+    },
+    [nodes, role, selectedNodeId, setEditing, setSelected],
+  );
+
   const setGroupRef = useCallback((id: string, nodeEl: Konva.Group | null) => {
     const m = groupRefs.current;
     if (nodeEl) m.set(id, nodeEl);
@@ -303,15 +324,7 @@ export default function Canvas({ userId, role }: CanvasProps) {
         return;
       }
       if ((e.key === 'Delete' || e.key === 'Backspace') && selectedNodeId) {
-        const node = nodes.find((n) => n.id === selectedNodeId);
-        if (node && canActOnNode(role, node.acl)) {
-          const toRemove =
-            node.group_id && node.group_id.length > 0
-              ? nodes.filter((n) => n.group_id === node.group_id && canActOnNode(role, n.acl))
-              : [node];
-          toRemove.forEach((n) => deleteNode(n.id));
-          setSelected(null);
-        }
+        eraseNodeOrGroup(selectedNodeId);
       }
       if (e.key === 'Escape') {
         setSelected(null);
@@ -320,7 +333,7 @@ export default function Canvas({ userId, role }: CanvasProps) {
     }
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [selectedNodeId, nodes, role, setSelected, setEditing, userId]);
+  }, [selectedNodeId, nodes, role, setSelected, setEditing, userId, eraseNodeOrGroup]);
 
   /* ── Coordinate helpers ─────────────────────────────────────────────── */
   /** Convert a pointer position (in screen coords) to stage (canvas) coords. */
@@ -403,6 +416,10 @@ export default function Canvas({ userId, role }: CanvasProps) {
     if (tool === 'select') {
       setSelected(null);
       setEditing(null);
+      return;
+    }
+
+    if (tool === 'erase') {
       return;
     }
 
@@ -559,7 +576,7 @@ export default function Canvas({ userId, role }: CanvasProps) {
         onMouseDown={handleStageMouseDown}
         onDragMove={onStageDragMove}
         style={{
-          cursor: stageDraggable ? 'grab' : 'crosshair',
+          cursor: stageDraggable ? 'grab' : tool === 'erase' ? 'cell' : 'crosshair',
         }}
       >
         <Layer>
@@ -573,7 +590,9 @@ export default function Canvas({ userId, role }: CanvasProps) {
               isTransforming={isTransforming}
               setGroupRef={setGroupRef}
               role={role}
+              tool={tool}
               onSelect={(id) => setSelected(id)}
+              onErase={eraseNodeOrGroup}
               onDoubleClick={(id) => setEditing(id)}
               onDragStart={handleShapeDragStart}
               onDragMove={handleShapeDragMove}
@@ -672,6 +691,7 @@ function EmptyHint({ tool }: { tool: Tool }) {
     pen: 'Click and drag to draw freehand',
     line: 'Click and drag for a straight line',
     arrow: 'Click and drag for an arrow',
+    erase: 'Click or drag across shapes to erase',
   };
   return (
     <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none select-none">
