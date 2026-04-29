@@ -37,6 +37,7 @@ import { canActOnNode } from '@/lib/node-types';
 interface CanvasProps {
   userId: string;
   role: Role;
+  members?: { id: string; name: string; color: string; role: string }[];
   onStageReady?: (stage: Konva.Stage) => void;
 }
 
@@ -104,7 +105,7 @@ function commitGroupResize(group: Konva.Group, snapshot: NodeSnapshot): void {
   });
 }
 
-export default function Canvas({ userId, role, onStageReady }: CanvasProps) {
+export default function Canvas({ userId, role, members, onStageReady }: CanvasProps) {
   const stageRef = useRef<Konva.Stage | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [size, setSize] = useState({ w: 800, h: 600 });
@@ -703,6 +704,8 @@ export default function Canvas({ userId, role, onStageReady }: CanvasProps) {
           node={selectedNode}
           stagePos={stagePos}
           stageScale={stageScale}
+          members={members}
+          userId={userId}
         />
       )}
 
