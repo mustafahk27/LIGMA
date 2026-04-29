@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useMemo, useRef } from 'react';
 import type Konva from 'konva';
-import { ExportButton } from '@/components/ExportButton';
+import { ExportButton, type ExportButtonHandle } from '@/components/ExportButton';
 import dynamic from 'next/dynamic';
 import { useRouter, useParams } from 'next/navigation';
 import Link from 'next/link';
@@ -184,6 +184,7 @@ export default function RoomPage() {
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement | null>(null);
   const stageRef = useRef<Konva.Stage | null>(null);
+  const exportDialogRef = useRef<ExportButtonHandle>(null);
 
   const nodes = useYjsNodes();
 
@@ -528,6 +529,17 @@ export default function RoomPage() {
             </svg>
           </button>
 
+          {token && roomId && (
+            <ExportButton
+              ref={exportDialogRef}
+              stageRef={stageRef}
+              roomId={roomId}
+              roomName={room?.name ?? 'Room'}
+              token={token}
+              renderTrigger={() => null}
+            />
+          )}
+
           {menuOpen && (
             <div
               role="menu"
@@ -562,30 +574,25 @@ export default function RoomPage() {
               )}
 
               {token && roomId && (
-                <ExportButton
-                  stageRef={stageRef}
-                  roomId={roomId}
-                  roomName={room?.name ?? 'Room'}
-                  token={token}
-                  renderTrigger={(open) => (
-                    <button
-                      type="button"
-                      onClick={() => { setMenuOpen(false); open(); }}
-                      className="flex w-full items-center gap-2.5 px-3 py-2 text-xs text-[var(--text)] hover:bg-[var(--surface-2)]"
-                    >
-                      <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden>
-                        <path
-                          d="M6 1v7M3 5l3 3 3-3M1 9v1.5A.5.5 0 001.5 11h9a.5.5 0 00.5-.5V9"
-                          stroke="currentColor"
-                          strokeWidth="1.4"
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                        />
-                      </svg>
-                      Export summary
-                    </button>
-                  )}
-                />
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMenuOpen(false);
+                    exportDialogRef.current?.openDialog();
+                  }}
+                  className="flex w-full items-center gap-2.5 px-3 py-2 text-xs text-[var(--text)] hover:bg-[var(--surface-2)]"
+                >
+                  <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden>
+                    <path
+                      d="M6 1v7M3 5l3 3 3-3M1 9v1.5A.5.5 0 001.5 11h9a.5.5 0 00.5-.5V9"
+                      stroke="currentColor"
+                      strokeWidth="1.4"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                  </svg>
+                  Export summary
+                </button>
               )}
 
               <div className="my-1 h-px bg-[var(--border)]" />
