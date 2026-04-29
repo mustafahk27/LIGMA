@@ -14,7 +14,8 @@ export type NodeKind =
   | 'circle'
   | 'pen'
   | 'line'
-  | 'arrow';
+  | 'arrow'
+  | 'zone';
 
 export interface NodeAcl {
   /** When true only leads may mutate this node. */

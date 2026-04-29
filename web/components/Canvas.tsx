@@ -402,7 +402,6 @@ export default function Canvas({ userId, role }: CanvasProps) {
 
     const pos = toStageCoords(e.clientX, e.clientY);
     setLocalCursor(pos.x, pos.y);
-    trackActivity(pos.x, pos.y, 1);
 
     handleCreationDrag(pos);
   }
@@ -457,7 +456,8 @@ export default function Canvas({ userId, role }: CanvasProps) {
       tool === 'circle' ||
       tool === 'pen' ||
       tool === 'line' ||
-      tool === 'arrow'
+      tool === 'arrow' ||
+      tool === 'zone'
     ) {
       const isPen = tool === 'pen';
       const isSeg = tool === 'line' || tool === 'arrow';
@@ -468,6 +468,7 @@ export default function Canvas({ userId, role }: CanvasProps) {
         width: isPen ? 0 : 1,
         height: isPen ? 0 : 1,
         points: isPen ? [0, 0] : isSeg ? [0, 0, Math.max(8, 1), 0] : [],
+        content: tool === 'zone' ? 'New Zone' : '',
         author_id: userId,
       });
       dragState.current = { nodeId: id, startStage: pos, type: tool };
@@ -479,8 +480,9 @@ export default function Canvas({ userId, role }: CanvasProps) {
   function handleCreationDrag(pos: { x: number; y: number }) {
     const drag = dragState.current;
     if (!drag || !drag.nodeId) return;
+    trackActivity(pos.x, pos.y, 8);
 
-    if (drag.type === 'rect' || drag.type === 'round_rect' || drag.type === 'circle') {
+    if (drag.type === 'rect' || drag.type === 'round_rect' || drag.type === 'circle' || drag.type === 'zone') {
       const dx = pos.x - drag.startStage.x;
       const dy = pos.y - drag.startStage.y;
       const w = Math.abs(dx);
@@ -535,7 +537,17 @@ export default function Canvas({ userId, role }: CanvasProps) {
           const dy = (p[3] ?? 0) - (p[1] ?? 0);
           if (dx * dx + dy * dy < 36) deleteNode(id);
         }
+      } else if (id && t === 'zone') {
+        setEditing(id);
+        setTool('select');
       }
+
+      // Add a significant heat burst when finishing a shape creation
+      if (id && (t === 'rect' || t === 'circle' || t === 'round_rect')) {
+        const n = nodes.find((x) => x.id === id);
+        if (n) trackActivity(n.x + n.width / 2, n.y + n.height / 2, 20);
+      }
+
       dragState.current = null;
     }
   }
@@ -672,7 +684,7 @@ export default function Canvas({ userId, role }: CanvasProps) {
       {/* Minimap Overlay */}
       <Minimap 
         visible={heatmapVisible} 
-        filter={heatmapFilter} 
+        filter={heatmapFilter}
         onJump={(x, y) => setStage({ x: -x * stageScale + size.w / 2, y: -y * stageScale + size.h / 2 })}
       />
 
@@ -716,6 +728,7 @@ function EmptyHint({ tool }: { tool: Tool }) {
     line: 'Click and drag for a straight line',
     arrow: 'Click and drag for an arrow',
     erase: 'Click or drag across shapes to erase',
+    zone: 'Click and drag to define a presence zone',
   };
   return (
     <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none select-none">

@@ -13,6 +13,7 @@ import { ConnectionStatus } from '@/components/ConnectionStatus';
 import { CanvasReplayOverlay } from '@/components/CanvasReplayOverlay';
 import { TaskBoard } from '@/components/TaskBoard';
 import { EventLog } from '@/components/EventLog';
+import { PresenceZonesSidebar } from '@/components/PresenceZonesSidebar';
 import type { TaskItem } from '@/components/TaskBoard';
 import { useWsProvider } from '@/lib/ws-provider';
 import { setLocalIdentity, clearLocalAwareness } from '@/lib/awareness-identity';
@@ -132,6 +133,16 @@ const TOOLS: { id: Tool; label: string; icon: React.ReactNode }[] = [
       </svg>
     ),
   },
+  {
+    id: 'zone',
+    label: 'Zone (Z)',
+    icon: (
+      <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+        <rect x="1" y="1" width="12" height="12" rx="1" stroke="currentColor" strokeWidth="1.3" strokeDasharray="2 2" />
+        <path d="M4 4h6M4 7h4" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
+      </svg>
+    ),
+  },
 ];
 
 
@@ -165,7 +176,7 @@ export default function RoomPage() {
   const [inviteStatus, setInviteStatus] = useState<'idle' | 'sending' | 'sent' | 'error'>('idle');
   const [inviteError, setInviteError] = useState('');
   const [rejection, setRejection] = useState<string | null>(null);
-  const [sidebarTab, setSidebarTab] = useState<'events' | 'tasks'>('events');
+  const [sidebarTab, setSidebarTab] = useState<'events' | 'tasks' | 'zones'>('events');
 
   const nodes = useYjsNodes();
 
@@ -259,6 +270,7 @@ export default function RoomPage() {
       a: 'arrow',
       p: 'pen',
       e: 'erase',
+      z: 'zone',
     };
     function onKey(e: KeyboardEvent) {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
@@ -516,7 +528,7 @@ export default function RoomPage() {
         >
           {/* Tab strip */}
           <div className="flex border-b border-[var(--border)] flex-shrink-0">
-            {(['events', 'tasks'] as const).map((tab) => (
+            {(['events', 'tasks', 'zones'] as const).map((tab) => (
               <button
                 key={tab}
                 onClick={() => setSidebarTab(tab)}
@@ -539,7 +551,7 @@ export default function RoomPage() {
                   transition: 'color 0.15s',
                 }}
               >
-                {tab === 'events' ? '⚡ Events' : '📋 Tasks'}
+                {tab === 'events' ? '⚡ Events' : tab === 'tasks' ? '📋 Tasks' : '📍 Zones'}
               </button>
             ))}
           </div>
@@ -548,7 +560,7 @@ export default function RoomPage() {
           <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
             {sidebarTab === 'events' && token ? (
               <EventLog key={roomId} roomId={roomId} token={token} />
-            ) : (
+            ) : sidebarTab === 'tasks' ? (
               <TaskBoard
                 items={tasks}
                 onJump={(id) => {
@@ -559,7 +571,15 @@ export default function RoomPage() {
                   }
                 }}
               />
-            )}
+            ) : sidebarTab === 'zones' ? (
+              <PresenceZonesSidebar
+                nodes={nodes}
+                onJump={(x, y) => {
+                  const s = useUiStore.getState();
+                  s.setStage({ x: -x * s.stageScale + 400, y: -y * s.stageScale + 300 });
+                }}
+              />
+            ) : null}
           </div>
         </div>
 
