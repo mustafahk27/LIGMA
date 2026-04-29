@@ -178,9 +178,15 @@ function TaskCard({
                     : item.status === 'completed'
                       ? 'var(--success)'
                       : item.status === 'inprogress'
-                        ? 'var(--warning)'
-                        : 'var(--surface-2)',
-                color: item.status === 'inprogress' ? '#000' : item.status === 'open' ? 'var(--text-2)' : '#fff',
+                        ? '#f59e0b'
+                        : '#1d4ed8',
+                color: '#fff',
+                boxShadow:
+                  item.status === 'inprogress'
+                    ? '0 0 0 1px rgba(245,158,11,0.35)'
+                    : item.status === 'open'
+                      ? '0 0 0 1px rgba(29,78,216,0.35)'
+                      : 'none',
               }}
             >
               {item.status.replace(/_/g, ' ')}

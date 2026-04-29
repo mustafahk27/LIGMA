@@ -95,6 +95,22 @@ export async function roomRoutes(app: FastifyInstance): Promise<void> {
     const room = await getRoomWithMembers(id);
     if (!room) return reply.status(404).send({ error: 'Room not found' });
 
+    const seqResult = await query<{ latest_seq: string }>(
+      `SELECT COALESCE(MAX(seq), 0)::text AS latest_seq FROM events WHERE room_id = $1`,
+      [id]
+    );
+    const latestSeq = Number(seqResult.rows[0]?.latest_seq ?? '0');
+
+    await query(
+      `INSERT INTO user_room_reads (room_id, user_id, last_seen_seq, last_seen_at)
+       VALUES ($1, $2, $3, NOW())
+       ON CONFLICT (room_id, user_id)
+       DO UPDATE SET
+         last_seen_seq = GREATEST(user_room_reads.last_seen_seq, EXCLUDED.last_seen_seq),
+         last_seen_at = NOW()`,
+      [id, user.id, latestSeq]
+    );
+
     return reply.send(room);
   });
 

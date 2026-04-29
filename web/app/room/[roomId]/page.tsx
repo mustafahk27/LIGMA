@@ -460,6 +460,20 @@ export default function RoomPage() {
           </div>
         )}
 
+        <Link
+          href="/dashboard"
+          className="btn btn-ghost text-xs px-2.5 py-1 flex-shrink-0"
+          title="Open dashboards"
+        >
+          <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden>
+            <rect x="1" y="1" width="4" height="4" rx="0.8" stroke="currentColor" strokeWidth="1.2" />
+            <rect x="7" y="1" width="4" height="4" rx="0.8" stroke="currentColor" strokeWidth="1.2" />
+            <rect x="1" y="7" width="4" height="4" rx="0.8" stroke="currentColor" strokeWidth="1.2" />
+            <rect x="7" y="7" width="4" height="4" rx="0.8" stroke="currentColor" strokeWidth="1.2" />
+          </svg>
+          Dashboard
+        </Link>
+
         {isLead && (
           <button
             className="btn btn-ghost text-xs px-2.5 py-1 flex-shrink-0"
