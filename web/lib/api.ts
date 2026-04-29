@@ -14,10 +14,12 @@ export async function apiFetch<T>(
   options: RequestInit & { token?: string } = {},
 ): Promise<T> {
   const { token, headers, ...rest } = options;
+  // Fastify rejects application/json with an empty body (FST_ERR_CTP_EMPTY_JSON_BODY).
+  // Only set Content-Type when we actually send a body (e.g. leave/logout POST).
   const res = await fetch(`${API_BASE}${path}`, {
     ...rest,
     headers: {
-      'Content-Type': 'application/json',
+      ...(rest.body != null ? { 'Content-Type': 'application/json' } : {}),
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
       ...headers,
     },
@@ -26,17 +28,22 @@ export async function apiFetch<T>(
   if (!res.ok) {
     let message = res.statusText;
     try {
-      const body = await res.json();
-      message = body.message ?? body.error ?? message;
+      const text = await res.text();
+      if (text.trim()) {
+        const body = JSON.parse(text) as { message?: string; error?: string };
+        message = body.message ?? body.error ?? message;
+      }
     } catch {
       // ignore
     }
     throw new ApiError(res.status, message);
   }
 
-  // 204 No Content
-  if (res.status === 204) return undefined as T;
-  return res.json() as Promise<T>;
+  // No body / non-JSON success (204, 205, or empty 200)
+  if (res.status === 204 || res.status === 205) return undefined as T;
+  const text = await res.text();
+  if (!text.trim()) return undefined as T;
+  return JSON.parse(text) as T;
 }
 
 // ── Auth ──────────────────────────────────────────────────────────────────────
