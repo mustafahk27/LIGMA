@@ -15,6 +15,26 @@ export interface SyncRequest {
   stateVector: number[];
 }
 
+/**
+ * Maximum events we'll consider for replay. Above this, fall back to a snap.
+ * 5000 covers heavy editing sessions; smaller bursts coalesce into batches
+ * (see BATCH_WINDOW_MS) so the actual per-tick count is much lower.
+ */
+const MAX_REPLAY_EVENTS = 5000;
+
+/**
+ * Maximum batches we'll animate. Each batch is one visible tick on the client,
+ * so this caps the replay duration at ~MAX_REPLAY_BATCHES * tick-interval.
+ */
+const MAX_REPLAY_BATCHES = 80;
+
+/**
+ * Updates whose `created_at` timestamps are within this many ms of one
+ * another are merged into a single batch. A drag = many micro-updates that
+ * should appear as one visible step.
+ */
+const BATCH_WINDOW_MS = 250;
+
 // ─── First Connect ─────────────────────────────────────────────────────────────
 
 /**
@@ -44,71 +64,115 @@ export async function sendFullState(ws: WebSocket, roomId: string): Promise<void
 // ─── Reconnect Replay ─────────────────────────────────────────────────────────
 
 /**
- * Called when a client reconnects and sends { type: 'sync', lastSeq, stateVector }.
- *
- * Instead of re-sending the full state, we compute the minimal diff:
- *   1. Fetch all yjs_update events with seq > lastSeq from Postgres
- *   2. Materialize those events into a temporary Y.Doc starting from current server state
- *   3. Encode only what's missing using Y.encodeStateAsUpdate(tempDoc, clientStateVector)
- *   4. Send the compact diff as a single binary frame
- *
- * If there are no missed events (client is already up-to-date), send nothing —
- * just confirm with a { type: 'synced', seq } JSON frame.
+ * Build the room state as it was at the moment the given seq was applied.
+ * Done by replaying every yjs_update event with seq ≤ targetSeq into a fresh
+ * temp doc. Returns an empty buffer if there's no history to replay yet.
  */
+async function encodeStateAtSeq(roomId: string, targetSeq: number): Promise<Uint8Array> {
+  if (targetSeq <= 0) return new Uint8Array(0);
+  const events = await getEventsSince(roomId, 0, 100_000);
+  const tempDoc = new Y.Doc();
+  for (const ev of events) {
+    if (ev.seq > targetSeq) break;
+    if (ev.event_type !== 'yjs_update') continue;
+    const b64 = (ev.payload as { update?: string }).update;
+    if (!b64) continue;
+    try {
+      Y.applyUpdate(tempDoc, Uint8Array.from(Buffer.from(b64, 'base64')));
+    } catch (err) {
+      console.error(`[sync] base-state apply failed seq=${ev.seq}:`, err);
+    }
+  }
+  return Y.encodeStateAsUpdate(tempDoc);
+}
+
 export async function replayMissedEvents(
   ws: WebSocket,
   roomId: string,
-  { lastSeq, stateVector }: SyncRequest
+  { lastSeq }: SyncRequest
 ): Promise<void> {
-  const missedEvents = await getEventsSince(roomId, lastSeq);
+  const latestSeq = await getLatestSeq(roomId);
 
-  if (missedEvents.length === 0) {
-    // Client is already up to date
-    const currentSeq = await getLatestSeq(roomId);
-    ws.send(JSON.stringify({ type: 'synced', seq: currentSeq }));
+  // Already at latest — just send a base snap so the client's ydoc is in sync
+  // even if it was a fresh page-load (empty ydoc).
+  if (latestSeq <= lastSeq) {
+    const fullState = encodeRoomState(roomId);
+    ws.send(JSON.stringify({
+      type: 'replay',
+      baseState: Buffer.from(fullState).toString('base64'),
+      updates: [],
+      finalSeq: latestSeq,
+    }));
     return;
   }
 
-  // Build a temp doc that contains exactly the missed updates
-  const tempDoc = new Y.Doc();
+  const missedEvents = await getEventsSince(roomId, lastSeq, MAX_REPLAY_EVENTS + 1);
 
-  // Start from the server's current authoritative state
-  const serverState = encodeRoomState(roomId);
-  if (serverState.byteLength > 0) {
-    Y.applyUpdate(tempDoc, serverState);
-  }
-
-  // Apply each missed event (they're already in causal order from ORDER BY seq ASC)
-  for (const event of missedEvents) {
-    if (event.event_type !== 'yjs_update') continue;
-    const b64 = (event.payload as { update: string }).update;
+  // Coalesce drag-style micro-updates into time-windowed batches so each
+  // visible tick on the client corresponds to one logical change rather than
+  // a single mousemove frame.
+  const yjsEvents = missedEvents.filter((e) => e.event_type === 'yjs_update');
+  const batches: Uint8Array[][] = [];
+  let currentBatch: Uint8Array[] = [];
+  let batchStartTs = 0;
+  for (const ev of yjsEvents) {
+    const b64 = (ev.payload as { update?: string }).update;
     if (!b64) continue;
+    let bytes: Uint8Array;
     try {
-      const update = Uint8Array.from(Buffer.from(b64, 'base64'));
-      Y.applyUpdate(tempDoc, update);
-    } catch (err) {
-      console.error(`[sync] Failed to apply missed event seq=${event.seq}:`, err);
+      bytes = Uint8Array.from(Buffer.from(b64, 'base64'));
+    } catch {
+      continue;
+    }
+    const ts = new Date(ev.created_at).getTime();
+    if (currentBatch.length === 0) {
+      batchStartTs = ts;
+      currentBatch.push(bytes);
+    } else if (ts - batchStartTs < BATCH_WINDOW_MS) {
+      currentBatch.push(bytes);
+    } else {
+      batches.push(currentBatch);
+      currentBatch = [bytes];
+      batchStartTs = ts;
     }
   }
+  if (currentBatch.length > 0) batches.push(currentBatch);
 
-  // Compute the diff: what does the client need to reach tempDoc's state?
-  const clientSv = stateVector.length > 0
-    ? new Uint8Array(stateVector)
-    : new Uint8Array(0);
+  const finalSeq = missedEvents[missedEvents.length - 1]?.seq ?? lastSeq;
 
-  const diff = Y.encodeStateAsUpdate(tempDoc, clientSv);
-
-  const latestSeq = missedEvents[missedEvents.length - 1]?.seq ?? lastSeq;
-
-  // Send the seq update first, then the binary diff
-  ws.send(JSON.stringify({ type: 'synced', seq: latestSeq }));
-
-  if (diff.byteLength > 0) {
-    ws.send(diff);
+  // Too many distinct logical changes → snap with the current full state
+  if (batches.length > MAX_REPLAY_BATCHES) {
+    const fullState = encodeRoomState(roomId);
+    ws.send(JSON.stringify({
+      type: 'replay',
+      baseState: Buffer.from(fullState).toString('base64'),
+      updates: [],
+      finalSeq: latestSeq,
+    }));
+    console.log(
+      `[sync] Room ${roomId}: ${batches.length} batches > MAX, snapping to seq ${latestSeq}`
+    );
+    return;
   }
 
+  // Animate: client gets state at lastSeq instantly, then each batch is
+  // applied with a small delay so the canvas evolves visibly.
+  const baseState = await encodeStateAtSeq(roomId, lastSeq);
+  const updates = batches.map((batch) => {
+    const merged = batch.length === 1 ? batch[0]! : Y.mergeUpdates(batch);
+    return Buffer.from(merged).toString('base64');
+  });
+
+  ws.send(JSON.stringify({
+    type: 'replay',
+    baseState: Buffer.from(baseState).toString('base64'),
+    updates,
+    finalSeq,
+  }));
+
   console.log(
-    `[sync] Room ${roomId}: replayed ${missedEvents.length} events ` +
-    `(seq ${lastSeq + 1}–${latestSeq}), diff size=${diff.byteLength}B`
+    `[sync] Room ${roomId}: replay envelope baseState=${baseState.byteLength}B ` +
+    `+ ${updates.length} batches from ${yjsEvents.length} updates ` +
+    `(seq ${lastSeq + 1}–${finalSeq})`
   );
 }

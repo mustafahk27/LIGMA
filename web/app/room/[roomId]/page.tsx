@@ -10,6 +10,7 @@ import { useWsStore } from '@/store/ws';
 import { rooms } from '@/lib/api';
 import type { Room } from '@/lib/api';
 import { ConnectionStatus } from '@/components/ConnectionStatus';
+import { CanvasReplayOverlay } from '@/components/CanvasReplayOverlay';
 import { TaskBoard } from '@/components/TaskBoard';
 import { EventLog } from '@/components/EventLog';
 import type { TaskItem } from '@/components/TaskBoard';
@@ -359,6 +360,7 @@ export default function RoomPage() {
           {user && room && !loadingRoom && (
             <Canvas userId={user.id} role={myRole} />
           )}
+          <CanvasReplayOverlay />
         </div>
 
         {/* Tabbed sidebar */}

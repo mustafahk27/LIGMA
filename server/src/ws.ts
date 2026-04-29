@@ -161,6 +161,8 @@ export function createUpgradeHandler(wss: WebSocketServer) {
     // ── Parse ?token= from query string ──────────────────────────────────
     const qs = new URLSearchParams(rawQuery ?? '');
     const token = qs.get('token');
+    const lastSeqParam = parseInt(qs.get('lastSeq') ?? '0', 10);
+    const isReconnect = Number.isFinite(lastSeqParam) && lastSeqParam > 0;
 
     if (!token) {
       console.warn('[ws] upgrade rejected: missing ?token=');
@@ -223,8 +225,12 @@ export function createUpgradeHandler(wss: WebSocketServer) {
       // Register the client BEFORE sending state so broadcastToRoom works
       joinRoom(roomId, clientId, ws, user!, clientRole);
 
-      // Send full state (two frames: JSON control + binary state blob)
-      void sendFullState(ws, roomId);
+      // Fresh connection: send full state immediately (init + binary).
+      // Reconnect: skip auto state — client will send `sync` and we'll respond
+      // with a step-by-step replay envelope so the canvas can animate it.
+      if (!isReconnect) {
+        void sendFullState(ws, roomId);
+      }
 
       // Start the per-connection message loop
       handleConnection(ws, roomId, clientId, user!, clientRole);
