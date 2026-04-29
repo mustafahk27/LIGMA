@@ -139,6 +139,10 @@ export const rooms = {
       `/rooms/${id}/events?after_seq=${afterSeq}&limit=80`,
       { token }
     ),
+  leave: (id: string, token: string) =>
+    apiFetch<void>(`/rooms/${id}/leave`, { method: 'POST', token }),
+  delete: (id: string, token: string) =>
+    apiFetch<void>(`/rooms/${id}`, { method: 'DELETE', token }),
 };
 
 export const dashboard = {

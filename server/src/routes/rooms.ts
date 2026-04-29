@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { query } from '../db.js';
 import { requireAuth } from '../middleware/auth.js';
+import { disconnectUserFromRoom, destroyRoom } from '../rooms.js';
 
 interface Member {
   id: string;
@@ -157,5 +158,50 @@ export async function roomRoutes(app: FastifyInstance): Promise<void> {
 
     const latest_seq = result.rows[0]?.seq ?? afterSeq;
     return reply.send({ events: result.rows, latest_seq });
+  });
+
+  // POST /rooms/:id/leave — remove current user from the room memberships
+  app.post('/rooms/:id/leave', { preHandler: requireAuth }, async (request, reply) => {
+    const { id: room_id } = request.params as { id: string };
+    const user = request.user!;
+
+    disconnectUserFromRoom(room_id, user.id);
+
+    const res = await query(
+      `DELETE FROM memberships WHERE room_id = $1 AND user_id = $2 RETURNING id`,
+      [room_id, user.id]
+    );
+
+    if ((res.rowCount ?? 0) === 0) {
+      return reply.status(404).send({ error: 'Not a member of this room' });
+    }
+
+    return reply.status(204).send();
+  });
+
+  // DELETE /rooms/:id — delete a room (only lead can delete)
+  app.delete('/rooms/:id', { preHandler: requireAuth }, async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const user = request.user!;
+
+    const memberCheck = await query(
+      `SELECT role FROM memberships WHERE room_id = $1 AND user_id = $2`,
+      [id, user.id]
+    );
+    if ((memberCheck.rowCount ?? 0) === 0) {
+      return reply.status(403).send({ error: 'Not a member' });
+    }
+    const role = memberCheck.rows[0]?.role;
+    if (!role) {
+      return reply.status(403).send({ error: 'Not a member' });
+    }
+    if (role !== 'lead') {
+      return reply.status(403).send({ error: 'Only a lead may delete the room' });
+    }
+
+    destroyRoom(id);
+
+    await query(`DELETE FROM rooms WHERE id = $1`, [id]);
+    return reply.status(204).send();
   });
 }

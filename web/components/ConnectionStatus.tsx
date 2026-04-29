@@ -14,17 +14,17 @@ export function ConnectionStatus() {
 
   return (
     <div
-      className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-[var(--surface-2)] border border-[var(--border)] text-xs text-[var(--text-2)]"
+      className="flex items-center justify-center w-7 h-7 rounded-md hover:bg-[var(--surface-2)] flex-shrink-0"
       title={cfg.label}
+      aria-label={cfg.label}
     >
       <span
-        className="w-2 h-2 rounded-full flex-shrink-0"
+        className="w-2 h-2 rounded-full"
         style={{
           background: cfg.color,
           animation: cfg.pulse ? 'pulse-dot 1.2s ease-in-out infinite' : 'none',
         }}
       />
-      <span className="hidden sm:inline">{cfg.label}</span>
     </div>
   );
 }
