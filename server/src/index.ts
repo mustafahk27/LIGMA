@@ -5,6 +5,7 @@ import { WebSocketServer } from 'ws';
 import { authRoutes } from './routes/auth.js';
 import { roomRoutes } from './routes/rooms.js';
 import { inviteRoutes } from './routes/invites.js';
+import { exportRoutes } from './routes/export.js';
 import { createUpgradeHandler } from './ws.js';
 
 dotenv.config();
@@ -28,6 +29,7 @@ await app.register(cors, {
 await app.register(authRoutes);
 await app.register(roomRoutes);
 await app.register(inviteRoutes);
+await app.register(exportRoutes);
 
 const PORT = Number(process.env['PORT'] ?? 3001);
 

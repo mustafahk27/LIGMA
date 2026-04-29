@@ -7,5 +7,5 @@ build/
 *.log
 .DS_Store
 DevDay'26 Hackathon - PS.pdf
-
+/docs
 

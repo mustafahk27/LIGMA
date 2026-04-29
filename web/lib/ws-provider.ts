@@ -69,6 +69,8 @@ class WsProvider {
   private destroyed = false;
   /** Set to true once we complete the initial full-state handshake */
   private initialised = false;
+  /** Pending flag: push our local state to server after the next binary frame */
+  private pendingStatePush = false;
 
   constructor() {
     // ── Register Yjs + awareness listeners ONCE (not per reconnect) ──────────
@@ -238,6 +240,16 @@ class WsProvider {
     if (event.data instanceof ArrayBuffer) {
       const update = new Uint8Array(event.data);
       Y.applyUpdate(ydoc, update, 'remote');
+
+      // After the server's initial state blob, push what we have back so the
+      // server can recover any nodes it lost (e.g. in-flight write buffer crash).
+      if (this.pendingStatePush) {
+        this.pendingStatePush = false;
+        const clientState = Y.encodeStateAsUpdate(ydoc);
+        if (clientState.byteLength > 2 && this.ws && this.ws.readyState === WebSocket.OPEN) {
+          this.ws.send(clientState);
+        }
+      }
       return;
     }
 
@@ -252,10 +264,15 @@ class WsProvider {
 
     switch (msg.type) {
       case 'init': {
-        // Server is about to send the full binary state; record the seq
+        // Server is about to send the full binary state; record the seq.
+        // Only queue a state push if this is a fresh connect (not a reconnect
+        // that already pushed via sendSyncRequest).
+        const wasInitialised = this.initialised;
         this.storedLastSeq = msg.seq;
         this.initialised = true;
-        // The next frame will be a binary blob — handled by the ArrayBuffer branch above
+        if (!wasInitialised) {
+          this.pendingStatePush = true;
+        }
         break;
       }
 
@@ -307,6 +324,12 @@ class WsProvider {
       lastSeq: this.storedLastSeq,
       stateVector: Array.from(stateVector),
     }));
+
+    // Also push our local state so server can recover any nodes it lost.
+    const clientState = Y.encodeStateAsUpdate(ydoc);
+    if (clientState.byteLength > 2) {
+      this.ws.send(clientState);
+    }
   }
 
   // ── Exponential backoff ─────────────────────────────────────────────────────

@@ -35,6 +35,7 @@ import { canActOnNode } from '@/lib/node-types';
 interface CanvasProps {
   userId: string;
   role: Role;
+  onStageReady?: (stage: Konva.Stage) => void;
 }
 
 const MIN_SCALE = 0.2;
@@ -101,7 +102,7 @@ function commitGroupResize(group: Konva.Group, snapshot: NodeSnapshot): void {
   });
 }
 
-export default function Canvas({ userId, role }: CanvasProps) {
+export default function Canvas({ userId, role, onStageReady }: CanvasProps) {
   const stageRef = useRef<Konva.Stage | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [size, setSize] = useState({ w: 800, h: 600 });
@@ -205,6 +206,13 @@ export default function Canvas({ userId, role }: CanvasProps) {
   useEffect(() => {
     transformerRef.current?.forceUpdate?.();
   }, [selectedNodeKind]);
+
+  useEffect(() => {
+    if (onStageReady && stageRef.current) {
+      onStageReady(stageRef.current);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   /* ── Konva Transformer — snap-to-node sizes (skips pen, locked/viewer) ── */
   useEffect(() => {

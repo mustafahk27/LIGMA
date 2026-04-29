@@ -1,6 +1,8 @@
 'use client';
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
+import type Konva from 'konva';
+import { ExportButton } from '@/components/ExportButton';
 import dynamic from 'next/dynamic';
 import { useRouter, useParams } from 'next/navigation';
 import Link from 'next/link';
@@ -137,6 +139,7 @@ export default function RoomPage() {
   const [inviteError, setInviteError] = useState('');
   const [rejection, setRejection] = useState<string | null>(null);
   const [sidebarTab, setSidebarTab] = useState<'events' | 'tasks'>('events');
+  const stageRef = useRef<Konva.Stage | null>(null);
 
   /* ── Auth bootstrap ─────────────────────────────────────────────────── */
   useEffect(() => {
@@ -350,6 +353,9 @@ export default function RoomPage() {
           </button>
         )}
 
+        {token && roomId && (
+          <ExportButton stageRef={stageRef} roomId={roomId} roomName={room?.name ?? 'Room'} token={token} />
+        )}
         <ConnectionStatus />
       </header>
 
@@ -357,7 +363,11 @@ export default function RoomPage() {
       <div className="relative flex min-h-0 flex-1 overflow-hidden">
         <div className="flex-1 relative overflow-hidden">
           {user && room && !loadingRoom && (
-            <Canvas userId={user.id} role={myRole} />
+            <Canvas
+              userId={user.id}
+              role={myRole}
+              onStageReady={(stage) => { stageRef.current = stage; }}
+            />
           )}
         </div>
 
