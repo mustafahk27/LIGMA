@@ -193,6 +193,13 @@ export function deleteNode(id: string): void {
   }, 'local');
 }
 
+/** Remove every node from the shared canvas state. */
+export function clearNodes(): void {
+  ydoc.transact(() => {
+    nodes.clear();
+  }, 'local');
+}
+
 export function setNodeAcl(id: string, acl: NodeAcl): void {
   const node = nodes.get(id);
   if (!node) return;

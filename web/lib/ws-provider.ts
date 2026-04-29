@@ -4,6 +4,7 @@ import { useEffect } from 'react';
 import * as Y from 'yjs';
 import * as awarenessProtocol from 'y-protocols/awareness';
 import { ydoc } from './yjs';
+import { clearNodes } from './nodes';
 import { useWsStore } from '../store/ws';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -141,6 +142,12 @@ class WsProvider {
   // ── Public API ──────────────────────────────────────────────────────────────
 
   connect(roomId: string, token: string): void {
+    if (this.roomId && this.roomId !== roomId) {
+      clearNodes();
+      this.initialised = false;
+      this.pendingStatePush = false;
+      this.cancelReplay();
+    }
     this.roomId = roomId;
     this.token = token;
     this.destroyed = false;
