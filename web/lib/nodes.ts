@@ -47,6 +47,7 @@ const DEFAULTS: Record<NodeKind, { width: number; height: number; fill: string; 
   pen:         { width: 0, height: 0, fill: '#0000', stroke: '#dce6f5' },
   line:        { width: 8, height: 8, fill: '#0000', stroke: '#dce6f5' },
   arrow:       { width: 8, height: 8, fill: '#0000', stroke: '#4575f3' },
+  zone:        { width: 240, height: 160, fill: '#0000', stroke: '#4575f3' },
 };
 
 /** Stacking key in Yjs — higher draws on top. Missing `z_index` uses `created_at` (legacy). */

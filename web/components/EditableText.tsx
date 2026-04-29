@@ -5,6 +5,7 @@ import * as Y from 'yjs';
 import { getNodeText, updateNode } from '@/lib/nodes';
 import type { NodeSnapshot } from '@/lib/node-types';
 import { dimHex } from '@/lib/text-style';
+import { trackActivity } from '@/lib/heatmap';
 
 /** Match Canvas transformer minimums */
 const MIN_TEXT_BOX_H = 24;
@@ -30,15 +31,17 @@ export function EditableText({ node, stagePos, stageScale, onClose }: EditableTe
 
   const isSticky = node.type === 'sticky';
   const isText = node.type === 'text';
+  const isZone = node.type === 'zone';
   const lineHeight = isSticky ? 1.4 : 1.3;
 
   /** Content width in **screen** px — must match wrapped layout & Konva Text `width`. */
-  const contentWidthPx = Math.max(
+  const contentWidthPx = isZone ? 240 : Math.max(
     8,
     (node.width - (isSticky ? 24 : 0)) * stageScale,
   );
 
   function syncCanvasHeightToTextarea(el: HTMLTextAreaElement): void {
+    if (isZone) return; // Zone labels don't affect zone height
     el.style.overflow = 'hidden';
     el.style.overflowY = 'hidden';
     el.style.boxSizing = 'border-box';
@@ -94,6 +97,7 @@ export function EditableText({ node, stagePos, stageScale, onClose }: EditableTe
     node.fontItalic,
     node.textUnderline,
     isSticky,
+    isZone,
     node.id,
     stageScale,
     lineHeight,
@@ -120,24 +124,34 @@ export function EditableText({ node, stagePos, stageScale, onClose }: EditableTe
     applyDiffToYText(ytext, prev, next);
     lastValueRef.current = next;
 
+    trackActivity(node.x + node.width / 2, node.y + node.height / 2, 5);
+
     queueMicrotask(() => syncCanvasHeightToTextarea(e.target));
   }
 
-  if (!isSticky && !isText) return null;
+  if (!isSticky && !isText && !isZone) return null;
 
   const screenX = node.x * stageScale + stagePos.x;
   const screenY = node.y * stageScale + stagePos.y;
 
-  const fs = node.fontSize * stageScale;
-  const fontWeight = node.fontBold ? 700 : 400;
+  const fs = isZone ? 12 * stageScale : node.fontSize * stageScale;
+  const fontWeight = isZone ? 700 : (node.fontBold ? 700 : 400);
   const fontStyle = node.fontItalic ? 'italic' : 'normal';
+
+  let leftOffset = isSticky ? 12 * stageScale : 0;
+  let topOffset = isSticky ? 12 * stageScale : 0;
+  
+  if (isZone) {
+    leftOffset = 0;
+    topOffset = -6 * stageScale;
+  }
 
   return (
     <div
       className="absolute overflow-visible"
       style={{
-        left: screenX + (isSticky ? 12 * stageScale : 0),
-        top: screenY + (isSticky ? 12 * stageScale : 0),
+        left: screenX + leftOffset,
+        top: screenY + topOffset,
         width: contentWidthPx,
         minWidth: contentWidthPx,
         maxWidth: contentWidthPx,

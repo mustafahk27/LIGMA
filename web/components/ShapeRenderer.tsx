@@ -141,6 +141,8 @@ function ShapeBody({
     case 'rect':
     case 'round_rect':
       return <RectBody node={node} />;
+    case 'zone':
+      return <ZoneBody node={node} isEditing={isEditing} />;
     case 'circle':
       return <CircleBody node={node} />;
     case 'pen':
@@ -284,6 +286,48 @@ function CircleBody({ node }: { node: NodeSnapshot }) {
       stroke={node.stroke}
       strokeWidth={2}
     />
+  );
+}
+
+function ZoneBody({ node, isEditing }: { node: NodeSnapshot, isEditing: boolean }) {
+  const labelText = node.content || 'New Zone';
+  // rough measure of text width for the pill
+  const pillWidth = Math.max(labelText.length * 7 + 16, 60);
+  
+  return (
+    <>
+      <Rect
+        width={node.width}
+        height={node.height}
+        fill="rgba(69, 117, 243, 0.05)"
+        stroke="#4575f3"
+        strokeWidth={2}
+        dash={[8, 8]}
+        cornerRadius={8}
+      />
+      {!isEditing && (
+        <Group x={-8} y={-12}>
+          <Rect 
+            fill="#4575f3" 
+            cornerRadius={6} 
+            width={pillWidth} 
+            height={24} 
+            shadowColor="rgba(0,0,0,0.1)"
+            shadowBlur={4}
+            shadowOffset={{x: 0, y: 2}}
+          />
+          <Text
+            text={labelText}
+            fill="#ffffff"
+            fontSize={12}
+            fontStyle="bold"
+            x={8}
+            y={6}
+            fontFamily="Inter, system-ui, sans-serif"
+          />
+        </Group>
+      )}
+    </>
   );
 }
 

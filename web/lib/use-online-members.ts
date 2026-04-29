@@ -18,7 +18,14 @@ export function useOnlineMembers(): Set<string> {
 
   useEffect(() => {
     function pull() {
-      setIds(collect());
+      const next = collect();
+      setIds((prev) => {
+        if (prev.size !== next.size) return next;
+        for (const id of next) {
+          if (!prev.has(id)) return next;
+        }
+        return prev;
+      });
     }
     pull();
     awareness.on('change', pull);

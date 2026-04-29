@@ -86,13 +86,14 @@ export function useHeatmap(filter: HeatmapFilter): { cells: HeatmapCell[], maxHe
       const grid = new Map<string, number>();
       
       heatmapChunks.forEach((heat, key) => {
-        // key format: userId:timeChunk:cellX:cellY
         const parts = key.split(':');
-        if (parts.length === 4) {
-          const timeChunk = parseInt(parts[1], 10);
+        if (parts.length >= 4) {
+          const cellY = parts.pop()!;
+          const cellX = parts.pop()!;
+          const timeChunkStr = parts.pop()!;
+          const timeChunk = parseInt(timeChunkStr, 10);
+          
           if (timeChunk >= minChunk) {
-            const cellX = parts[2];
-            const cellY = parts[3];
             const gridKey = `${cellX}:${cellY}`;
             grid.set(gridKey, (grid.get(gridKey) || 0) + heat);
           }

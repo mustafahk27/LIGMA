@@ -4,7 +4,6 @@ import { useEffect, useRef, useState } from 'react';
 import { useHeatmap, HeatmapFilter } from '@/lib/heatmap';
 import { useYjsNodes } from '@/lib/use-yjs-nodes';
 import { useUiStore } from '@/store/ui';
-
 interface MinimapProps {
   filter: HeatmapFilter;
   visible: boolean;
@@ -23,9 +22,9 @@ function getPalette() {
   const grad = ctx.createLinearGradient(0, 0, 256, 0);
   
   grad.addColorStop(0.0, 'rgba(253, 186, 116, 0)');
-  grad.addColorStop(0.2, 'rgba(253, 186, 116, 0.4)');
-  grad.addColorStop(0.5, 'rgba(251, 146, 60, 0.6)');
-  grad.addColorStop(0.8, 'rgba(249, 115, 22, 0.8)');
+  grad.addColorStop(0.3, 'rgba(253, 186, 116, 0.3)');
+  grad.addColorStop(0.6, 'rgba(251, 146, 60, 0.6)');
+  grad.addColorStop(0.9, 'rgba(249, 115, 22, 0.85)');
   grad.addColorStop(1.0, 'rgba(239, 68, 68, 1)');
   
   ctx.fillStyle = grad;
@@ -173,8 +172,8 @@ export function Minimap({ filter, visible, onJump }: MinimapProps) {
 
       heatCtx.globalCompositeOperation = 'lighter';
       
-      const baseRadius = 250; // Large radius in world space to create smooth clouds
-      const radius = Math.max(10, baseRadius * scaleX);
+      const baseRadius = 80; // Smaller radius for more precision
+      const radius = Math.max(4, baseRadius * scaleX);
       const circle = getCircleTemplate(radius);
 
       for (const cell of cells) {
@@ -182,7 +181,8 @@ export function Minimap({ filter, visible, onJump }: MinimapProps) {
         const my = toMiniY(cell.y);
         const intensity = cell.heat / maxHeat;
         
-        heatCtx.globalAlpha = Math.max(0.05, Math.min(intensity, 1));
+        // Use a non-linear curve for more "punch" in lower values but cap it
+        heatCtx.globalAlpha = Math.max(0.1, Math.min(Math.pow(intensity, 0.7), 1));
         heatCtx.drawImage(circle, mx - radius, my - radius);
       }
 
@@ -206,7 +206,7 @@ export function Minimap({ filter, visible, onJump }: MinimapProps) {
       
       // Draw the colorized heatmap over the nodes
       ctx.globalCompositeOperation = 'source-over';
-      ctx.globalAlpha = 0.8;
+      ctx.globalAlpha = 0.7;
       ctx.drawImage(heatCanvas, 0, 0);
       ctx.globalAlpha = 1.0;
     }

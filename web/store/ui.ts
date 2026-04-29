@@ -13,7 +13,8 @@ export type Tool =
   | 'pen'
   | 'line'
   | 'arrow'
-  | 'erase';
+  | 'erase'
+  | 'zone';
 
 interface UiStore {
   // ── Tool / selection ─────────────────────────────────────────────────────
@@ -37,7 +38,6 @@ interface UiStore {
   role: Role;
   setRole: (role: Role) => void;
 
-  // ── Heatmap ──────────────────────────────────────────────────────────────
   heatmapVisible: boolean;
   heatmapFilter: HeatmapFilter;
   setHeatmapVisible: (v: boolean) => void;
