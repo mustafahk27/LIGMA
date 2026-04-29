@@ -97,4 +97,49 @@ export async function roomRoutes(app: FastifyInstance): Promise<void> {
 
     return reply.send(room);
   });
+
+  // GET /rooms/:id/events — event log for the sidebar (newest first, excludes raw yjs_update blobs)
+  app.get('/rooms/:id/events', { preHandler: requireAuth }, async (request, reply) => {
+    const { id: room_id } = request.params as { id: string };
+    const { after_seq = '0', limit = '80' } = request.query as {
+      after_seq?: string;
+      limit?: string;
+    };
+    const user = request.user!;
+
+    const memberCheck = await query(
+      `SELECT role FROM memberships WHERE room_id = $1 AND user_id = $2`,
+      [room_id, user.id]
+    );
+    if ((memberCheck.rowCount ?? 0) === 0) {
+      return reply.status(403).send({ error: 'Not a member' });
+    }
+
+    const safeLimit = Math.min(Math.max(1, parseInt(limit, 10) || 80), 200);
+    const afterSeq   = Math.max(0, parseInt(after_seq, 10) || 0);
+
+    const result = await query<{
+      id: string;
+      seq: number;
+      event_type: string;
+      payload: Record<string, unknown>;
+      created_at: string;
+      actor_name: string;
+      actor_color: string;
+    }>(
+      `SELECT e.id, e.seq, e.event_type, e.payload, e.created_at,
+              u.name AS actor_name, u.color AS actor_color
+       FROM events e
+       JOIN users u ON u.id = e.actor_id
+       WHERE e.room_id = $1
+         AND e.seq > $2
+         AND e.event_type != 'yjs_update'
+       ORDER BY e.seq DESC
+       LIMIT $3`,
+      [room_id, afterSeq, safeLimit]
+    );
+
+    const latest_seq = result.rows[0]?.seq ?? afterSeq;
+    return reply.send({ events: result.rows, latest_seq });
+  });
 }

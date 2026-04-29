@@ -165,3 +165,9 @@ body {
 .animate-float-b     { animation: float-b 7.5s ease-in-out infinite; }
 .animate-float-c     { animation: float-c 5s ease-in-out infinite; }
 .animate-slide-right { animation: slide-in-right 0.3s ease both; }
+
+@keyframes eventFlash {
+  0%   { background: rgba(52, 211, 153, 0.18); }
+  100% { background: transparent; }
+}
+

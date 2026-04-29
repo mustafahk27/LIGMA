@@ -11,6 +11,7 @@ import { rooms } from '@/lib/api';
 import type { Room } from '@/lib/api';
 import { ConnectionStatus } from '@/components/ConnectionStatus';
 import { TaskBoard } from '@/components/TaskBoard';
+import { EventLog } from '@/components/EventLog';
 import type { TaskItem } from '@/components/TaskBoard';
 import { useWsProvider } from '@/lib/ws-provider';
 import { setLocalIdentity, clearLocalAwareness } from '@/lib/awareness-identity';
@@ -135,6 +136,7 @@ export default function RoomPage() {
   const [inviteStatus, setInviteStatus] = useState<'idle' | 'sending' | 'sent' | 'error'>('idle');
   const [inviteError, setInviteError] = useState('');
   const [rejection, setRejection] = useState<string | null>(null);
+  const [sidebarTab, setSidebarTab] = useState<'events' | 'tasks'>('events');
 
   /* ── Auth bootstrap ─────────────────────────────────────────────────── */
   useEffect(() => {
@@ -351,15 +353,61 @@ export default function RoomPage() {
         <ConnectionStatus />
       </header>
 
-      {/* ── Canvas + TaskBoard ───────────────────────────────────────── */}
-      <div className="flex flex-1 overflow-hidden relative">
+      {/* ── Canvas + Sidebar ───────────────────────────────────────── */}
+      <div className="relative flex min-h-0 flex-1 overflow-hidden">
         <div className="flex-1 relative overflow-hidden">
           {user && room && !loadingRoom && (
             <Canvas userId={user.id} role={myRole} />
           )}
         </div>
 
-        <TaskBoard items={DEMO_TASKS} onJump={(id) => console.log('jump to', id)} />
+        {/* Tabbed sidebar */}
+        <div
+          className="flex min-h-0 flex-shrink-0 flex-col border-l border-[var(--border)] bg-[var(--surface)]"
+          style={{ width: '280px' }}
+        >
+          {/* Tab strip */}
+          <div className="flex border-b border-[var(--border)] flex-shrink-0">
+            {(['events', 'tasks'] as const).map((tab) => (
+              <button
+                key={tab}
+                onClick={() => setSidebarTab(tab)}
+                style={{
+                  flex: 1,
+                  padding: '10px 0',
+                  fontSize: '11px',
+                  fontWeight: 600,
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.07em',
+                  color: sidebarTab === tab ? 'var(--accent)' : 'var(--text-3)',
+                  borderTop: 'none',
+                  borderLeft: 'none',
+                  borderRight: 'none',
+                  borderBottom: sidebarTab === tab
+                    ? '2px solid var(--accent)'
+                    : '2px solid transparent',
+                  background: 'transparent',
+                  cursor: 'pointer',
+                  transition: 'color 0.15s',
+                }}
+              >
+                {tab === 'events' ? '⚡ Events' : '📋 Tasks'}
+              </button>
+            ))}
+          </div>
+
+          {/* Tab content */}
+          <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+            {sidebarTab === 'events' && token ? (
+              <EventLog key={roomId} roomId={roomId} token={token} />
+            ) : (
+              <TaskBoard
+                items={DEMO_TASKS}
+                onJump={(id) => console.log('jump to', id)}
+              />
+            )}
+          </div>
+        </div>
 
         {/* RBAC rejection toast */}
         {rejection && (

@@ -1,0 +1,7 @@
+{
+  "watch": ["src"],
+  "ext": "ts,json",
+  "delay": 1000,
+  "exec": "node --loader ts-node/esm src/index.ts",
+  "signal": "SIGTERM"
+}
